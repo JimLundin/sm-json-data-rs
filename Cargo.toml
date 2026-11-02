@@ -3,6 +3,7 @@ name = "sm-json-data"
 version = "0.1.0"
 edition = "2021"
 description = "Typed Rust bindings for the sm-json-data Super Metroid logic model"
+license = "0BSD"
 repository = "https://github.com/JimLundin/sm-json-data-rs"
 keywords = ["super-metroid", "randomizer", "serde"]
 publish = false

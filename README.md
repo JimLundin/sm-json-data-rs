@@ -46,3 +46,7 @@ The corpus tests check that:
 - every named requirement in tech, helpers and strats resolves to a definition
 - every requirement and door condition in the schema has a matching variant
 - every numeric default evaluates
+
+## License
+
+The code is under [0BSD](LICENSE), so you can use it for anything without attribution. This covers only the crate, not the sm-json-data files, which have their own license.
