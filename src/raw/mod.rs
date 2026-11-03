@@ -1,6 +1,6 @@
 //! A faithful mirror of the JSON files, used to parse and write them.
 //!
-//! Most code should use [`crate::model`] instead. Optional fields stay `Option`,
+//! Most code should use the model in [`sm_logic`] instead. Optional fields stay `Option`,
 //! unknown fields are rejected, and serializing a value reproduces its file's
 //! content. Schema defaults are noted on fields rather than applied.
 
