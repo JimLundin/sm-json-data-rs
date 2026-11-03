@@ -4,8 +4,8 @@
 //! when it is missing, so a green run always means the data was actually checked.
 
 use serde_json::Value;
-use sm_json_data::model::*;
-use sm_json_data::raw;
+use sm_json_data::{export_world, import_world, raw};
+use sm_logic::*;
 use std::path::PathBuf;
 
 fn root() -> PathBuf {
@@ -73,8 +73,23 @@ fn normalize(value: &mut Value, parent: &str, table: &[(&'static str, &'static s
             }
         }
         Value::Array(items) => items.iter_mut().for_each(|item| normalize(item, parent, table)),
+        // Addresses and speeds keep their value, not their exact spelling.
+        Value::String(text) => {
+            if let Some(number) = spelled_number(text) {
+                *value = number;
+            }
+        }
         _ => {}
     }
+}
+
+fn spelled_number(text: &str) -> Option<Value> {
+    if let Some(digits) = text.strip_prefix("0x") {
+        return u64::from_str_radix(digits, 16).ok().map(Value::from);
+    }
+    let (whole, fraction) = text.strip_prefix('$')?.split_once('.')?;
+    let fraction = format!("{fraction:0<4}");
+    Some(Value::String(format!("run speed {}.{}", u32::from_str_radix(whole, 16).ok()?, u32::from_str_radix(&fraction, 16).ok()?)))
 }
 
 fn diff(path: &str, original: &Value, exported: &Value, out: &mut Vec<String>) {
@@ -116,13 +131,13 @@ fn load() -> raw::GameData {
 }
 
 fn import(data: &raw::GameData) -> World {
-    World::import(data).unwrap_or_else(|errors| panic!("{errors}"))
+    import_world(data).unwrap_or_else(|errors| panic!("{errors}"))
 }
 
 #[test]
 fn importing_then_exporting_preserves_everything() {
     let data = load();
-    let out = import(&data).to_raw();
+    let out = export_world(&import(&data));
     let mut failures = Vec::new();
     compare("items", &data.items, &out.items, &mut failures);
     compare("tech", &data.tech, &out.tech, &mut failures);
@@ -183,7 +198,7 @@ fn ids_lead_to_the_named_entities() {
 fn expect_rejected(change: impl FnOnce(&mut raw::GameData), expected: &str) {
     let mut data = load();
     change(&mut data);
-    let errors = World::import(&data).expect_err("import should fail");
+    let errors = import_world(&data).expect_err("import should fail");
     let text = errors.to_string();
     assert!(text.contains(expected), "expected `{expected}` in:\n{text}");
 }
@@ -314,7 +329,7 @@ fn every_problem_is_reported_at_once() {
     let mut data = load();
     add_requirement(&mut data, r#""canNotARealTech""#);
     data.rooms[1].strats[0].requires.push(serde_json::from_str(r#""f_NotARealFlag""#).unwrap());
-    let errors = World::import(&data).unwrap_err();
+    let errors = import_world(&data).unwrap_err();
     assert_eq!(errors.0.len(), 2, "{errors}");
     assert!(errors.0[0].location.contains(&data.rooms[0].name));
 }

@@ -1,7 +1,8 @@
 //! Builds a [`World`] from the parsed JSON, resolving and validating every reference.
 
-use super::*;
 use crate::raw;
+use sm_logic::*;
+use std::collections::HashMap;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt;
@@ -57,17 +58,15 @@ impl fmt::Display for WorldError {
 
 impl std::error::Error for WorldError {}
 
-impl World {
-    /// Loads and imports an `sm-json-data` checkout.
-    pub fn load(root: impl AsRef<Path>) -> Result<World, WorldError> {
-        let data = raw::GameData::load(root).map_err(WorldError::Load)?;
-        World::import(&data).map_err(WorldError::Import)
-    }
+/// Loads and imports an `sm-json-data` checkout.
+pub fn load_world(root: impl AsRef<Path>) -> Result<World, WorldError> {
+    let data = raw::GameData::load(root).map_err(WorldError::Load)?;
+    import_world(&data).map_err(WorldError::Import)
+}
 
-    /// Builds a world from parsed data, reporting every invalid reference.
-    pub fn import(data: &raw::GameData) -> Result<World, ImportErrors> {
-        Importer::new(data).run()
-    }
+/// Builds a world from parsed data, reporting every invalid reference.
+pub fn import_world(data: &raw::GameData) -> Result<World, ImportErrors> {
+    Importer::new(data).run()
 }
 
 fn dense(index: usize, what: &str, errors: &RefCell<Vec<ModelError>>) -> u16 {
@@ -77,8 +76,37 @@ fn dense(index: usize, what: &str, errors: &RefCell<Vec<ModelError>>) -> u16 {
     })
 }
 
-fn doc(note: &Option<Note>, detail: &Option<Note>, dev: &Option<Note>) -> Doc {
-    Doc { note: note.clone(), detail: detail.clone(), dev: dev.clone() }
+fn convert_note(note: &Option<raw::Note>) -> Option<Note> {
+    note.as_ref().map(|note| match note {
+        raw::Note::Text(text) => Note::Text(text.clone()),
+        raw::Note::Lines(lines) => Note::Lines(lines.clone()),
+    })
+}
+
+fn doc(note_text: &Option<raw::Note>, detail: &Option<raw::Note>, dev: &Option<raw::Note>) -> Doc {
+    Doc { note: convert_note(note_text), detail: convert_note(detail), dev: convert_note(dev) }
+}
+
+fn address(value: &raw::HexValue) -> Address {
+    Address(value.value())
+}
+
+fn opt_address(value: &Option<raw::HexValue>) -> Option<Address> {
+    value.as_ref().map(address)
+}
+
+fn run_speed(speed: &Option<raw::ExtraRunSpeed>) -> Res<Option<RunSpeed>> {
+    speed
+        .as_ref()
+        .map(|speed| {
+            let scaled = speed.value() * 65_536.0;
+            if scaled.fract() == 0.0 && scaled >= 0.0 && scaled <= f64::from(u32::MAX) {
+                Ok(RunSpeed(scaled as u32))
+            } else {
+                Err(format!("run speed `{}` is finer than the game can store", speed.as_str()))
+            }
+        })
+        .transpose()
 }
 
 fn slice<T>(list: &Option<Vec<T>>) -> &[T] {
@@ -93,8 +121,8 @@ fn implicit(value: Option<bool>) -> Implicit {
     }
 }
 
-fn speed_range(min: &Option<ExtraRunSpeed>, max: &Option<ExtraRunSpeed>) -> SpeedRange {
-    SpeedRange { min: min.clone(), max: max.clone() }
+fn speed_range(min: &Option<raw::ExtraRunSpeed>, max: &Option<raw::ExtraRunSpeed>) -> Res<SpeedRange> {
+    Ok(SpeedRange { min: run_speed(min)?, max: run_speed(max)? })
 }
 
 fn open_ends(value: u8) -> Res<u8> {
@@ -538,7 +566,7 @@ impl<'a> Importer<'a> {
                 M::SpaceJumping { speed_booster: *speed_booster, speed: tiles(min_tiles, max_tiles) }
             }
             R::ComeInBlueSpaceJumping { min_extra_run_speed, max_extra_run_speed } => {
-                M::BlueSpaceJumping { extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed) }
+                M::BlueSpaceJumping { extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)? }
             }
             R::ComeInShinecharging(r) => M::Shinecharging { runway: runway(r)? },
             R::ComeInGettingBlueSpeed {
@@ -562,7 +590,7 @@ impl<'a> Importer<'a> {
                         ..RunwaySlopes::default()
                     },
                 },
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
             },
             R::ComeInShinecharged {} => M::Shinecharged,
             R::ComeInShinechargedJumping {} => M::ShinechargedJumping,
@@ -573,17 +601,17 @@ impl<'a> Importer<'a> {
             R::ComeInWithDoorStuckSetup {} => M::DoorStuckSetup,
             R::ComeInSpeedballing { runway: r, min_extra_run_speed, max_extra_run_speed } => M::Speedballing {
                 runway: runway(r)?,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
             },
             R::ComeInWithTemporaryBlue { direction } => M::TemporaryBlue { direction: *direction },
             R::ComeInSpinning { speed_booster, unusable_tiles, min_extra_run_speed, max_extra_run_speed } => M::Spinning {
                 speed_booster: *speed_booster,
                 unusable_tiles: *unusable_tiles,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
             },
             R::ComeInBlueSpinning { unusable_tiles, min_extra_run_speed, max_extra_run_speed } => M::BlueSpinning {
                 unusable_tiles: *unusable_tiles,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
             },
             R::ComeInWithMockball { speed_booster, adjacent_min_tiles, remote_and_landing_min_tiles } => {
                 M::Mockball { speed_booster: *speed_booster, run_up: run_up(adjacent_min_tiles, remote_and_landing_min_tiles)? }
@@ -598,7 +626,7 @@ impl<'a> Importer<'a> {
             R::ComeInWithBlueSpringBallBounce { movement_type, min_extra_run_speed, max_extra_run_speed, min_landing_tiles } => {
                 M::BlueSpringBallBounce {
                     movement: *movement_type,
-                    extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                    extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
                     min_landing_tiles: *min_landing_tiles,
                 }
             }
@@ -640,7 +668,7 @@ impl<'a> Importer<'a> {
             kind,
             through_toilet: comes_through_toilet.unwrap_or(TriState::No),
             heated: comes_in_heated.unwrap_or(TriState::Any),
-            dev_note: dev_note.clone(),
+            dev_note: convert_note(dev_note),
         })
     }
 
@@ -675,7 +703,7 @@ impl<'a> Importer<'a> {
                         starting_stutterless: starting_stutterless_tiles.unwrap_or(0),
                     },
                 },
-                min_extra_speed: min_extra_run_speed.clone(),
+                min_extra_speed: run_speed(min_extra_run_speed)?,
                 heated: *heated,
             },
             R::LeaveShinecharged {} => M::Shinecharged,
@@ -683,13 +711,13 @@ impl<'a> Importer<'a> {
             R::LeaveWithSpark { position, grounded } => M::Spark { position: *position, grounded: *grounded },
             R::LeaveSpinning { remote_runway, min_extra_run_speed, max_extra_run_speed, blue } => M::Spinning {
                 remote: runway(remote_runway)?,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
                 blue: blue.unwrap_or(TriState::Any),
             },
             R::LeaveWithMockball { remote_runway, landing_runway, min_extra_run_speed, max_extra_run_speed, blue } => M::Mockball {
                 remote: runway(remote_runway)?,
                 landing: runway(landing_runway)?,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
                 blue: blue.unwrap_or(TriState::Any),
             },
             R::LeaveWithSpringBallBounce {
@@ -703,12 +731,12 @@ impl<'a> Importer<'a> {
                 remote: runway(remote_runway)?,
                 landing: runway(landing_runway)?,
                 movement: *movement_type,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
                 blue: blue.unwrap_or(TriState::Any),
             },
             R::LeaveSpaceJumping { remote_runway, min_extra_run_speed, max_extra_run_speed, blue } => M::SpaceJumping {
                 remote: runway(remote_runway)?,
-                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed),
+                extra_speed: speed_range(min_extra_run_speed, max_extra_run_speed)?,
                 blue: blue.unwrap_or(TriState::Any),
             },
             R::LeaveWithStoredFallSpeed { fall_speed_in_tiles } => M::StoredFallSpeed { tiles: *fall_speed_in_tiles },
@@ -778,7 +806,7 @@ impl<'a> Importer<'a> {
             dev_note,
         } = s;
         Ok(Strat {
-            name: name.clone(),
+            name: Some(name.clone()),
             entry: entrance_condition.as_ref().map(|c| self.entry(c, scope_ref)).transpose()?,
             requires: self.requires(requires, scope_ref)?,
             exit: exit_condition.as_ref().map(|c| self.exit(c)).transpose()?,
@@ -792,13 +820,13 @@ impl<'a> Importer<'a> {
             },
             door_unlocks: slice(unlocks_doors)
                 .iter()
-                .map(|raw::UnlockDoor { node_id, types, requires, use_implicit_requires, note, dev_note }| {
+                .map(|raw::UnlockDoor { node_id, types, requires, use_implicit_requires, note: unlock_note, dev_note }| {
                     Ok(DoorUnlock {
                         node: node_id.map(|id| self.node(scope_ref, id)).transpose()?,
                         types: types.clone(),
                         requires: self.requires(slice(requires), scope_ref)?,
                         use_implicit_requires: use_implicit_requires.unwrap_or(true),
-                        doc: doc(note, &None, dev_note),
+                        doc: doc(unlock_note, &None, dev_note),
                     })
                 })
                 .collect::<Res<_>>()?,
@@ -810,7 +838,7 @@ impl<'a> Importer<'a> {
             wall_jump_avoid: wall_jump_avoid.unwrap_or(false),
             failures: slice(failures)
                 .iter()
-                .map(|raw::StratFailure { name, leads_to_node, cost, softlock, note, dev_note }| {
+                .map(|raw::StratFailure { name, leads_to_node, cost, softlock, note: failure_note, dev_note }| {
                     let outcome = match (leads_to_node, softlock.unwrap_or(false)) {
                         (None, false) => FailureOutcome::Continues,
                         (Some(node), false) => FailureOutcome::LeadsTo(self.node(scope_ref, *node)?),
@@ -818,10 +846,10 @@ impl<'a> Importer<'a> {
                         (Some(_), true) => return Err(format!("failure `{name}` both softlocks and leads to a node")),
                     };
                     Ok(StratFailure {
-                        name: name.clone(),
+                        name: Some(name.clone()),
                         outcome,
                         cost: self.requires(slice(cost), scope_ref)?,
-                        doc: doc(note, &None, dev_note),
+                        doc: doc(failure_note, &None, dev_note),
                     })
                 })
                 .collect::<Res<_>>()?,
@@ -910,7 +938,7 @@ impl<'a> Importer<'a> {
                     _ => return Err(invalid()),
                 },
                 orientation: *door_orientation,
-                address: node_address.clone(),
+                address: opt_address(node_address),
                 environments: slice(door_environments)
                     .iter()
                     .map(|raw::DoorEnvironment { physics, entrance_nodes, note, dev_note }| DoorEnvironment {
@@ -932,13 +960,13 @@ impl<'a> Importer<'a> {
                 twins: slice(twin_door_addresses)
                     .iter()
                     .map(|raw::TwinDoorAddress { room_address, door_address }| TwinDoor {
-                        room_address: room_address.clone(),
-                        door_address: door_address.clone(),
+                        room_address: address(room_address),
+                        door_address: address(door_address),
                     })
                     .collect(),
             }),
-            T::Entrance => NodeKind::Entrance { transit: transit()?, orientation: orientation()?, address: node_address.clone() },
-            T::Exit => NodeKind::Exit { transit: transit()?, orientation: orientation()?, address: node_address.clone() },
+            T::Entrance => NodeKind::Entrance { transit: transit()?, orientation: orientation()?, address: opt_address(node_address) },
+            T::Exit => NodeKind::Exit { transit: transit()?, orientation: orientation()?, address: opt_address(node_address) },
             T::Item => NodeKind::Item {
                 item: self.item(node_item.ok_or("item node has no nodeItem")?)?,
                 placement: match node_sub_type {
@@ -947,7 +975,7 @@ impl<'a> Importer<'a> {
                     S::Visible => ItemPlacement::Visible,
                     _ => return Err(invalid()),
                 },
-                address: node_address.clone().ok_or("item node has no nodeAddress")?,
+                address: opt_address(node_address).ok_or("item node has no nodeAddress")?,
             },
             T::Junction => {
                 reject(&[(node_address.is_some(), "nodeAddress"), (door_orientation.is_some(), "doorOrientation")])?;
@@ -1038,7 +1066,7 @@ impl<'a> Importer<'a> {
             area: area.clone(),
             subarea: subarea.clone(),
             subsubarea: subsubarea.clone(),
-            address: room_address.clone(),
+            address: opt_address(room_address),
             environments: room_environments
                 .iter()
                 .map(|raw::RoomEnvironment { heated, entrance_nodes, note, dev_note }| RoomEnvironment {
@@ -1053,7 +1081,7 @@ impl<'a> Importer<'a> {
                 .iter()
                 .map(|raw::Obstacle { id, name, obstacle_type, note, dev_note }| Obstacle {
                     key: id.as_str().to_owned(),
-                    name: name.clone(),
+                    name: Some(name.clone()),
                     kind: *obstacle_type,
                     doc: doc(note, &None, dev_note),
                 })
@@ -1070,12 +1098,12 @@ impl<'a> Importer<'a> {
             }),
             notables: slice(notables)
                 .iter()
-                .map(|raw::Notable { id, name, wall_jump_avoid, note, dev_note }| Notable {
+                .map(|raw::Notable { id, name, wall_jump_avoid, note: text, dev_note }| Notable {
                     id: *id,
-                    name: name.clone(),
+                    name: Some(name.clone()),
                     wall_jump_avoid: wall_jump_avoid.unwrap_or(false),
-                    note: note.clone(),
-                    dev_note: dev_note.clone(),
+                    note: convert_note(&Some(text.clone())),
+                    dev_note: convert_note(dev_note),
                 })
                 .collect(),
             doc: doc(note, &None, dev_note),
@@ -1086,7 +1114,7 @@ impl<'a> Importer<'a> {
         let raw::RoomEnemy { id, group_name, enemy_name, quantity, home_nodes, between_nodes, spawn, stop_spawn, note, dev_note } = e;
         Ok(RoomEnemy {
             key: id.clone(),
-            group_name: group_name.clone(),
+            group_name: Some(group_name.clone()),
             enemy: self.enemy(enemy_name)?,
             quantity: *quantity,
             placement: match (home_nodes, between_nodes) {
@@ -1216,12 +1244,12 @@ impl<'a> Importer<'a> {
                 room,
                 node: *node_id,
                 position: *position,
-                label: ConnectionLabel {
+                label: Some(ConnectionLabel {
                     area: area.clone(),
                     subarea: subarea.clone(),
                     room: room_name.clone(),
                     node: node_name.clone(),
-                },
+                }),
                 doc: doc(note, &None, dev_note),
             })
         };
@@ -1274,7 +1302,7 @@ impl<'a> Importer<'a> {
             .iter()
             .map(|c| Category {
                 name: c.name.clone(),
-                description: c.description.clone(),
+                description: Some(c.description.clone()),
                 members: c.techs.iter().map(|t| self.lookup.techs[t.name.as_str()]).collect(),
             })
             .collect();
@@ -1294,7 +1322,7 @@ impl<'a> Importer<'a> {
             .iter()
             .map(|c| Category {
                 name: c.name.clone(),
-                description: c.description.clone(),
+                description: Some(c.description.clone()),
                 members: c.helpers.iter().map(|h| self.lookup.helpers[h.name.as_str()]).collect(),
             })
             .collect();
@@ -1315,7 +1343,7 @@ impl<'a> Importer<'a> {
             .iter()
             .map(|c| Category {
                 name: c.name.clone(),
-                description: c.description.clone(),
+                description: Some(c.description.clone()),
                 members: c.numerics.iter().map(|n| self.lookup.numerics[n.name.as_str()]).collect(),
             })
             .collect();
@@ -1345,10 +1373,10 @@ impl<'a> Importer<'a> {
         let raw::ItemsFile { implicit_items, upgrade_items, expansion_items, game_flags, dev_note, .. } = &data.items;
         let items = ItemCatalog {
             implicit: implicit_items.clone(),
-            upgrades: upgrade_items.iter().map(|u| Upgrade { item: u.name, data: u.data.clone() }).collect(),
+            upgrades: upgrade_items.iter().map(|u| Upgrade { item: u.name, data: opt_address(&u.data) }).collect(),
             expansions: expansion_items
                 .iter()
-                .map(|e| Expansion { item: e.name, data: e.data.clone(), resource: e.resource, amount: e.resource_amount })
+                .map(|e| Expansion { item: e.name, data: address(&e.data), resource: e.resource, amount: e.resource_amount })
                 .collect(),
             doc: doc(&None, &None, dev_note),
         };
@@ -1358,13 +1386,10 @@ impl<'a> Importer<'a> {
         if let Err(problem) = &start {
             errors.push(ModelError { location: "starting state".to_owned(), problem: problem.clone() });
         }
-        if errors.is_empty() {
-            errors.extend(numeric_cycle_errors(&numerics));
-        }
         if !errors.is_empty() {
             return Err(ImportErrors(errors));
         }
-        Ok(World {
+        let world = World {
             items,
             start: start.expect("errors were checked above"),
             flags,
@@ -1382,40 +1407,10 @@ impl<'a> Importer<'a> {
             rooms,
             connections,
             lookup: self.lookup,
-        })
+        };
+        world
+            .validate()
+            .map_err(|problem| ImportErrors(vec![ModelError { location: "validation".to_owned(), problem }]))?;
+        Ok(world)
     }
-}
-
-fn numeric_cycle_errors(numerics: &[Numeric]) -> Vec<ModelError> {
-    fn params(quantity: &Quantity, out: &mut Vec<NumericId>) {
-        match quantity {
-            Quantity::Const(_) => {}
-            Quantity::Param(id) => out.push(*id),
-            Quantity::Sum(terms) | Quantity::Product(terms) => terms.iter().for_each(|term| params(term, out)),
-        }
-    }
-    #[derive(Clone, Copy, PartialEq)]
-    enum Mark {
-        New,
-        Active,
-        Done,
-    }
-    fn visit(id: usize, numerics: &[Numeric], marks: &mut [Mark]) -> bool {
-        match marks[id] {
-            Mark::Done => return true,
-            Mark::Active => return false,
-            Mark::New => {}
-        }
-        marks[id] = Mark::Active;
-        let mut next = Vec::new();
-        params(&numerics[id].default, &mut next);
-        let ok = next.iter().all(|param| visit(param.index(), numerics, marks));
-        marks[id] = Mark::Done;
-        ok
-    }
-    let mut marks = vec![Mark::New; numerics.len()];
-    (0..numerics.len())
-        .filter(|id| !visit(*id, numerics, &mut marks))
-        .map(|id| ModelError { location: format!("numeric {}", numerics[id].name), problem: "its default depends on itself".to_owned() })
-        .collect()
 }

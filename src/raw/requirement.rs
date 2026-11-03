@@ -1,7 +1,6 @@
 //! Logical requirements, the expression language used throughout the data.
 
-use crate::raw::common::*;
-use crate::raw::items::Item;
+use crate::raw::*;
 use serde::de::{self, value::MapAccessDeserializer, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::skip_serializing_none;
@@ -178,22 +177,7 @@ impl Serialize for Requirement {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AmmoKind {
-    Missile,
-    Super,
-    PowerBomb,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ResourceKind {
-    Missile,
-    Super,
-    PowerBomb,
-    RegularEnergy,
-    ReserveEnergy,
-    Energy,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -254,13 +238,6 @@ pub struct FramesWithDrops {
     pub drops: Vec<EnemyDrop>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImplicitHeatFrames {
-    Yes,
-    No,
-    Suitless,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,12 +298,6 @@ pub struct ResetRoom {
     pub nodes: Vec<NodeId>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RidleyStuck {
-    Top,
-    Bottom,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

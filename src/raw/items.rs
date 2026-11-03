@@ -1,50 +1,8 @@
 //! `items.json`: items, game flags, and the initial game state.
 
-use crate::raw::common::*;
+use crate::raw::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::str::FromStr;
-
-macro_rules! items {
-    ($($variant:ident),+ $(,)?) => {
-        /// An item that appears in logical requirements or at an item location.
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-        pub enum Item {
-            $($variant),+
-        }
-
-        impl Item {
-            /// All items, in declaration order.
-            pub const ALL: &'static [Item] = &[$(Item::$variant),+];
-
-            /// The item's name as written in the data.
-            pub fn as_str(self) -> &'static str {
-                match self {
-                    $(Item::$variant => stringify!($variant)),+
-                }
-            }
-        }
-
-        impl FromStr for Item {
-            type Err = String;
-
-            fn from_str(name: &str) -> Result<Self, String> {
-                match name {
-                    $(stringify!($variant) => Ok(Item::$variant),)+
-                    _ => Err(format!("unknown item `{name}`")),
-                }
-            }
-        }
-    };
-}
-
-items! {
-    PowerBeam, Morph, Bombs, Charge, HiJump, Spazer, Varia, SpeedBooster, Ice, Grapple, Wave,
-    XRayScope, Gravity, SpaceJump, SpringBall, Plasma, ScrewAttack, ETank, Super, Missile,
-    ReserveTank, PowerBomb,
-    // Defined only by Map Rando's fork of the data.
-    WallJump, BlueBooster, SparkBooster,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,15 +23,6 @@ pub struct ItemsFile {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ConsumableResource {
-    RegularEnergy,
-    ReserveEnergy,
-    Missile,
-    Super,
-    PowerBomb,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

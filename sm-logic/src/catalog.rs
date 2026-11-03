@@ -1,12 +1,12 @@
 //! Game-wide definitions: items, tech, helpers, numerics, enemies and weapons.
 
-use super::*;
+use crate::*;
 
 /// A named group, used for presenting tech, helpers and numerics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Category<Id> {
     pub name: String,
-    pub description: String,
+    pub description: Option<String>,
     pub members: Vec<Id>,
 }
 
@@ -32,13 +32,13 @@ impl ItemCatalog {
 pub struct Upgrade {
     pub item: Item,
     /// Absent for items that only Map Rando's fork adds.
-    pub data: Option<HexValue>,
+    pub data: Option<Address>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Expansion {
     pub item: Item,
-    pub data: HexValue,
+    pub data: Address,
     pub resource: ConsumableResource,
     pub amount: u32,
 }
@@ -56,7 +56,7 @@ pub struct StartState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tech {
-    pub source_id: Option<crate::raw::TechId>,
+    pub source_id: Option<source::TechId>,
     pub name: String,
     pub tech_requires: Vec<Requirement>,
     pub other_requires: Vec<Requirement>,
@@ -85,7 +85,7 @@ pub struct Numeric {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Weapon {
-    pub source_id: crate::raw::WeaponId,
+    pub source_id: source::WeaponId,
     pub name: String,
     pub damage: u32,
     pub cooldown_frames: u32,
@@ -106,7 +106,7 @@ pub enum EnemyKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Enemy {
-    pub source_id: crate::raw::EnemyId,
+    pub source_id: source::EnemyId,
     pub name: String,
     pub kind: EnemyKind,
     pub attacks: Vec<Attack>,
@@ -137,7 +137,7 @@ pub struct Attack {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BossScenario {
-    pub source_id: crate::raw::ScenarioId,
+    pub source_id: source::ScenarioId,
     pub name: String,
     pub boss: EnemyId,
     pub weapons: WeaponFilter,

@@ -1,0 +1,15 @@
+[package]
+name = "sm-logic"
+version = "0.1.0"
+edition = "2021"
+description = "A validated model of Super Metroid's logic and a compact file format for it"
+license = "0BSD"
+repository = "https://github.com/JimLundin/sm-json-data-rs"
+publish = false
+
+# No dependencies by default, so that a game can decode packs without pulling anything in.
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }

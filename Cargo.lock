@@ -144,6 +144,14 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "sm-logic",
+]
+
+[[package]]
+name = "sm-logic"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

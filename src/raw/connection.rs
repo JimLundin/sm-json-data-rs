@@ -1,6 +1,6 @@
 //! Connection files under `connection/`.
 
-use crate::raw::common::*;
+use crate::raw::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -26,22 +26,7 @@ pub struct Connection {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ConnectionType {
-    HorizontalDoor,
-    VerticalDoor,
-    HorizontalMorphTunnel,
-    VerticalSandpit,
-    Elevator,
-    StoryMarker,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ConnectionDirection {
-    /// One-way, from the first node to the second.
-    Forward,
-    Bidirectional,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,11 +45,3 @@ pub struct ConnectionNode {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionPosition {
-    Left,
-    Right,
-    Top,
-    Bottom,
-}

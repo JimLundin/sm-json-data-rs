@@ -23,3 +23,6 @@ pub use logic::*;
 pub use requirement::*;
 pub use room::*;
 pub use strat::*;
+
+pub use sm_logic::source::{EnemyId, RoomId, ScenarioId, StratId, TechId, WeaponId};
+pub use sm_logic::{AmmoKind, ConnectionDirection, ConnectionPosition, ConnectionType, ConsumableResource, DoorOrientation, DoorUnlockType, DropRates, Environment, GModeMobility, GModeMode, ImplicitHeatFrames, Item, LockType, MovementType, NodeId, NotableId, ObstacleType, Physics, ResourceKind, RidleyStuck, SidePosition, SparkPosition, TriState, Utility, WeaponCategory};

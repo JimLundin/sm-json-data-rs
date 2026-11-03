@@ -3,21 +3,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-macro_rules! int_id {
-    ($($(#[$meta:meta])* $name:ident),+ $(,)?) => {$(
-        $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-        #[serde(transparent)]
-        pub struct $name(pub u32);
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-    )+};
-}
-
 macro_rules! string_id {
     ($($(#[$meta:meta])* $name:ident),+ $(,)?) => {$(
         $(#[$meta])*
@@ -49,25 +34,6 @@ macro_rules! string_id {
             }
         }
     )+};
-}
-
-int_id! {
-    /// Room identifier, unique across the game.
-    RoomId,
-    /// Node identifier, unique within a room.
-    NodeId,
-    /// Strat identifier, unique within a room.
-    StratId,
-    /// Notable identifier, unique within a room.
-    NotableId,
-    /// Tech identifier, unique across all tech.
-    TechId,
-    /// Enemy identifier, unique across the game.
-    EnemyId,
-    /// Weapon identifier, unique across the game.
-    WeaponId,
-    /// Boss scenario identifier, unique across the game.
-    ScenarioId,
 }
 
 string_id! {
@@ -225,14 +191,6 @@ impl From<ExtraRunSpeed> for String {
     }
 }
 
-/// A condition that can be required, forbidden, or left open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TriState {
-    Yes,
-    No,
-    Any,
-}
 
 #[cfg(test)]
 mod tests {

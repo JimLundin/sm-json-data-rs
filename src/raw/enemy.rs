@@ -1,8 +1,7 @@
 //! `enemies/main.json`, `enemies/bosses/main.json`, `enemies/bosses/scenarios.json`,
 //! and `weapons/main.json`.
 
-use crate::raw::common::*;
-use crate::raw::requirement::Requirement;
+use crate::raw::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -51,18 +50,6 @@ pub struct EnemyAttack {
     pub affected_by_gravity: Option<bool>,
 }
 
-/// Drop odds, each out of 102.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DropRates {
-    pub no_drop: f64,
-    pub small_energy: f64,
-    pub big_energy: f64,
-    pub missile: f64,
-    #[serde(rename = "super")]
-    pub super_missile: f64,
-    pub power_bomb: f64,
-}
 
 /// An enemy's size in pixels.
 #[skip_serializing_none]
@@ -161,16 +148,3 @@ pub struct Weapon {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum WeaponCategory {
-    All,
-    Beam,
-    ChargedBeam,
-    UnchargedBeam,
-    UnchargedSpazerBeam,
-    UnchargedIceBeam,
-    BeamNoPlasma,
-    UnchargedBeamNoPlasma,
-    PowerBombBlast,
-    SpecialBeamAttack,
-}

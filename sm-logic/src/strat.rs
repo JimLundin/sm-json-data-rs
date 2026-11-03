@@ -1,12 +1,12 @@
 //! Strats and the conditions that carry Samus's state through a door.
 
-use super::*;
+use crate::*;
 
 /// A strat that moves Samus between two nodes in a room.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomStrat {
     /// Upstream's ID, which is assigned some time after a strat is added.
-    pub source_id: Option<crate::raw::StratId>,
+    pub source_id: Option<source::StratId>,
     pub from: NodeId,
     pub to: NodeId,
     pub strat: Strat,
@@ -15,7 +15,8 @@ pub struct RoomStrat {
 /// A series of maneuvers. Locks and viewable nodes use this without a route.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Strat {
-    pub name: String,
+    /// Descriptive only, and absent when a pack is loaded without docs.
+    pub name: Option<String>,
     pub entry: Option<DoorEntry>,
     pub requires: Vec<Requirement>,
     pub exit: Option<DoorExit>,
@@ -64,7 +65,7 @@ pub struct DoorUnlock {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StratFailure {
-    pub name: String,
+    pub name: Option<String>,
     pub outcome: FailureOutcome,
     pub cost: Vec<Requirement>,
     pub doc: Doc,
@@ -88,8 +89,8 @@ pub struct TileRange {
 /// Optional bounds on extra run speed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SpeedRange {
-    pub min: Option<ExtraRunSpeed>,
-    pub max: Option<ExtraRunSpeed>,
+    pub min: Option<RunSpeed>,
+    pub max: Option<RunSpeed>,
 }
 
 /// Runways in the previous room that make a run-up possible. At least one is set.
@@ -187,7 +188,7 @@ pub enum DamageBoostEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DoorExit {
     Normal,
-    Runway { runway: Runway, min_extra_speed: Option<ExtraRunSpeed>, heated: Option<bool> },
+    Runway { runway: Runway, min_extra_speed: Option<RunSpeed>, heated: Option<bool> },
     Shinecharged,
     TemporaryBlue { direction: Option<SidePosition> },
     Spark { position: Option<SparkPosition>, grounded: Option<bool> },

@@ -1,10 +1,10 @@
 //! Rooms, their nodes, and the connections between them.
 
-use super::*;
+use crate::*;
 
 /// An obstacle, by its position in [`Room::obstacles`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ObstacleId(pub(crate) u8);
+pub struct ObstacleId(pub u8);
 
 impl ObstacleId {
     pub fn index(self) -> usize {
@@ -14,12 +14,12 @@ impl ObstacleId {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Room {
-    pub source_id: crate::raw::RoomId,
+    pub source_id: source::RoomId,
     pub name: String,
     pub area: String,
     pub subarea: String,
     pub subsubarea: Option<String>,
-    pub address: Option<HexValue>,
+    pub address: Option<Address>,
     pub environments: Vec<RoomEnvironment>,
     pub map_tiles: Vec<Vec<u8>>,
     pub nodes: Vec<Node>,
@@ -80,10 +80,10 @@ pub struct Node {
 pub enum NodeKind {
     Door(Door),
     /// One-way arrival from outside the room, such as falling in through a sandpit.
-    Entrance { transit: Transit, orientation: DoorOrientation, address: Option<HexValue> },
+    Entrance { transit: Transit, orientation: DoorOrientation, address: Option<Address> },
     /// One-way departure from the room, such as falling out through a sandpit.
-    Exit { transit: Transit, orientation: DoorOrientation, address: Option<HexValue> },
-    Item { item: Item, placement: ItemPlacement, address: HexValue },
+    Exit { transit: Transit, orientation: DoorOrientation, address: Option<Address> },
+    Item { item: Item, placement: ItemPlacement, address: Address },
     Junction(JunctionKind),
     Station { station: StationKind, services: Vec<Utility>, orientation: Option<DoorOrientation> },
 }
@@ -92,7 +92,7 @@ pub enum NodeKind {
 pub struct Door {
     pub style: DoorStyle,
     pub orientation: Option<DoorOrientation>,
-    pub address: Option<HexValue>,
+    pub address: Option<Address>,
     /// Empty for elevators, which have no door environment.
     pub environments: Vec<DoorEnvironment>,
     pub implicit: ImplicitStrats,
@@ -176,8 +176,8 @@ pub struct ImplicitStrats {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TwinDoor {
-    pub room_address: HexValue,
-    pub door_address: HexValue,
+    pub room_address: Address,
+    pub door_address: Address,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,7 +201,7 @@ pub struct ViewableNode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Obstacle {
     pub key: String,
-    pub name: String,
+    pub name: Option<String>,
     pub kind: ObstacleType,
     pub doc: Doc,
 }
@@ -209,7 +209,7 @@ pub struct Obstacle {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomEnemy {
     pub key: String,
-    pub group_name: String,
+    pub group_name: Option<String>,
     pub enemy: EnemyId,
     pub quantity: u32,
     pub placement: EnemyPlacement,
@@ -229,9 +229,9 @@ pub enum EnemyPlacement {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Notable {
     pub id: NotableId,
-    pub name: String,
+    pub name: Option<String>,
     pub wall_jump_avoid: bool,
-    pub note: Note,
+    pub note: Option<Note>,
     pub dev_note: Option<Note>,
 }
 
@@ -251,7 +251,7 @@ pub struct ConnectionEnd {
     pub node: NodeId,
     pub position: ConnectionPosition,
     /// The display names upstream gives this end, which often differ from the room's.
-    pub label: ConnectionLabel,
+    pub label: Option<ConnectionLabel>,
     pub doc: Doc,
 }
 

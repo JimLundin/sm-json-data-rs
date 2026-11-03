@@ -1,6 +1,6 @@
 //! The logic language: what Samus must have, pay, and do.
 
-use super::*;
+use crate::*;
 
 /// A non-negative quantity, possibly depending on tunable numeric parameters.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

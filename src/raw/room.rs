@@ -1,9 +1,6 @@
 //! Room files under `region/`.
 
-use crate::raw::common::*;
-use crate::raw::items::Item;
-use crate::raw::requirement::Requirement;
-use crate::raw::strat::Strat;
+use crate::raw::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -71,15 +68,6 @@ pub struct DoorEnvironment {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Physics {
-    Air,
-    Water,
-    Lava,
-    Acid,
-    Normal,
-}
 
 /// A door, item location, junction, or other point of interest in a room.
 #[skip_serializing_none]
@@ -156,26 +144,7 @@ pub enum NodeSubType {
     Map,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DoorOrientation {
-    Left,
-    Right,
-    Up,
-    Down,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Utility {
-    Save,
-    Missile,
-    Super,
-    Powerbomb,
-    Energy,
-    Reserve,
-    Map,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -191,17 +160,6 @@ pub struct Lock {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum LockType {
-    BossFight,
-    ColoredDoor,
-    Cutscene,
-    EscapeFunnel,
-    GameFlag,
-    KillEnemies,
-    Permanent,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -228,13 +186,6 @@ pub struct Obstacle {
     pub dev_note: Option<Note>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ObstacleType {
-    Inanimate,
-    Enemies,
-    Abstract,
-}
 
 /// A group of enemies placed in a room.
 #[skip_serializing_none]

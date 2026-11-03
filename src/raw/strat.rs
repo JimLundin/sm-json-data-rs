@@ -1,7 +1,6 @@
 //! Strats and the entrance and exit conditions that connect them across doors.
 
-use crate::raw::common::*;
-use crate::raw::requirement::{EnemyDrop, Requirement, Runway};
+use crate::raw::*;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::skip_serializing_none;
@@ -61,15 +60,6 @@ pub enum DoorShellBypass {
     Free,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DoorUnlockType {
-    Missiles,
-    Super,
-    Powerbomb,
-    Gray,
-    Ammo,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -406,20 +396,7 @@ pub enum ExitCondition {
     LeaveWithSuperSink {},
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SparkPosition {
-    Top,
-    Bottom,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SidePosition {
-    Left,
-    Right,
-    Any,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -435,37 +412,9 @@ pub enum DamageBoostExit {
     High,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MovementType {
-    Controlled,
-    Uncontrolled,
-    Any,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GModeMode {
-    Direct,
-    Indirect,
-    Any,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GModeMobility {
-    Mobile,
-    Immobile,
-    Any,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Environment {
-    Water,
-    Air,
-    Any,
-}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

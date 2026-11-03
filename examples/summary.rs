@@ -2,11 +2,12 @@
 //!
 //! Run with: `cargo run --example summary -- path/to/sm-json-data`
 
-use sm_json_data::model::{NodeKind, Quantity, Requirement, World};
+use sm_json_data::load_world;
+use sm_logic::{NodeKind, Quantity, Requirement};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::args().nth(1).ok_or("usage: summary <sm-json-data path>")?;
-    let world = World::load(root)?;
+    let world = load_world(root)?;
 
     let strats: usize = world.rooms.iter().map(|room| room.all_strats().count()).sum();
     let nodes = || world.rooms.iter().flat_map(|room| &room.nodes);
@@ -26,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             }
-            heat.push((most, &room.name, &strat.name));
+            heat.push((most, &room.name, strat.name.as_deref().unwrap_or("")));
         }
     }
     heat.sort_by_key(|entry| std::cmp::Reverse(entry.0));

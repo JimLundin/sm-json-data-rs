@@ -1,8 +1,9 @@
 //! Writes a [`World`] back to the JSON's shape, which also lets tests prove that
 //! importing preserved everything.
 
-use super::*;
 use crate::raw;
+use sm_logic::*;
+use std::ops::Deref;
 
 fn opt_vec<T>(list: Vec<T>) -> Option<Vec<T>> {
     if list.is_empty() { None } else { Some(list) }
@@ -55,8 +56,8 @@ fn swing_blocks(blocks: &[GrappleSwingBlock]) -> Vec<raw::GrappleSwingBlock> {
             position: b.position,
             environment: Some(b.environment),
             obstructions: opt_vec(b.obstructions.clone()),
-            note: b.doc.note.clone(),
-            dev_note: b.doc.dev.clone(),
+            note: raw_note(&b.doc.note),
+            dev_note: raw_note(&b.doc.dev),
         })
         .collect()
 }
@@ -65,12 +66,48 @@ fn remote_pairs(run_up: &RunUp) -> Option<Vec<[f64; 2]>> {
     opt_vec(run_up.remote_and_landing_min.iter().map(|(a, b)| [*a, *b]).collect())
 }
 
-impl World {
-    /// Writes this world back to the JSON's shape.
-    ///
-    /// All connections go in one file, defaults are written out, and `$schema` and
-    /// the `next*Id` counters are absent. Everything else matches the input.
-    pub fn to_raw(&self) -> raw::GameData {
+fn raw_note(note: &Option<Note>) -> Option<raw::Note> {
+    note.as_ref().map(|note| match note {
+        Note::Text(text) => raw::Note::Text(text.clone()),
+        Note::Lines(lines) => raw::Note::Lines(lines.clone()),
+    })
+}
+
+fn raw_hex(value: Address) -> raw::HexValue {
+    raw::HexValue::try_from(value.to_string()).expect("Address displays as valid hexadecimal")
+}
+
+fn raw_speed(speed: &Option<RunSpeed>) -> Option<raw::ExtraRunSpeed> {
+    speed.map(|speed| {
+        let fraction = format!("{:04X}", speed.0 & 0xffff);
+        let fraction = fraction.trim_end_matches('0');
+        let fraction = if fraction.is_empty() { "0" } else { fraction };
+        raw::ExtraRunSpeed::try_from(format!("${:X}.{fraction}", speed.0 >> 16)).expect("always valid")
+    })
+}
+
+/// Writes a world back to the JSON's shape.
+///
+/// All connections go in one file, defaults may be written out, numbers such as
+/// addresses are spelled canonically, and `$schema` and the `next*Id` counters are
+/// absent. Everything else matches the input. A world without docs exports with
+/// empty text where the JSON requires some.
+pub fn export_world(world: &World) -> raw::GameData {
+    Exporter(world).game_data()
+}
+
+struct Exporter<'a>(&'a World);
+
+impl Deref for Exporter<'_> {
+    type Target = World;
+
+    fn deref(&self) -> &World {
+        self.0
+    }
+}
+
+impl Exporter<'_> {
+    fn game_data(&self) -> raw::GameData {
         let (regular, bosses): (Vec<&Enemy>, Vec<&Enemy>) = self.enemies.iter().partition(|e| e.kind == EnemyKind::Regular);
         raw::GameData {
             items: raw::ItemsFile {
@@ -87,15 +124,15 @@ impl World {
                     .map(|(resource, max_amount)| raw::StartingResource { resource: *resource, max_amount: *max_amount })
                     .collect(),
                 implicit_items: self.items.implicit.clone(),
-                upgrade_items: self.items.upgrades.iter().map(|u| raw::UpgradeItem { name: u.item, data: u.data.clone() }).collect(),
+                upgrade_items: self.items.upgrades.iter().map(|u| raw::UpgradeItem { name: u.item, data: u.data.map(raw_hex) }).collect(),
                 expansion_items: self
                     .items
                     .expansions
                     .iter()
-                    .map(|e| raw::ExpansionItem { name: e.item, data: e.data.clone(), resource: e.resource, resource_amount: e.amount })
+                    .map(|e| raw::ExpansionItem { name: e.item, data: raw_hex(e.data), resource: e.resource, resource_amount: e.amount })
                     .collect(),
                 game_flags: self.flags.iter().map(|f| raw::FlagName(f.clone())).collect(),
-                dev_note: self.items.doc.dev.clone(),
+                dev_note: raw_note(&self.items.doc.dev),
             },
             tech: raw::TechFile {
                 schema: None,
@@ -104,7 +141,7 @@ impl World {
                     .iter()
                     .map(|c| raw::TechCategory {
                         name: c.name.clone(),
-                        description: c.description.clone(),
+                        description: c.description.clone().unwrap_or_default(),
                         techs: c.members.iter().map(|t| self.raw_tech(*t)).collect(),
                     })
                     .collect(),
@@ -117,7 +154,7 @@ impl World {
                     .iter()
                     .map(|c| raw::HelperCategory {
                         name: c.name.clone(),
-                        description: c.description.clone(),
+                        description: c.description.clone().unwrap_or_default(),
                         helpers: c
                             .members
                             .iter()
@@ -127,8 +164,8 @@ impl World {
                                     name: raw::HelperName(h.name.clone()),
                                     requires: self.raw_requires(&h.requires, None),
                                     map_rando_override: h.map_rando_override.then_some(true),
-                                    note: h.doc.note.clone(),
-                                    dev_note: h.doc.dev.clone(),
+                                    note: raw_note(&h.doc.note),
+                                    dev_note: raw_note(&h.doc.dev),
                                 }
                             })
                             .collect(),
@@ -142,7 +179,7 @@ impl World {
                     .iter()
                     .map(|c| raw::NumericCategory {
                         name: c.name.clone(),
-                        description: c.description.clone(),
+                        description: c.description.clone().unwrap_or_default(),
                         numerics: c
                             .members
                             .iter()
@@ -153,8 +190,8 @@ impl World {
                                     value: self.raw_quantity(&n.default),
                                     minimum: n.minimum,
                                     maximum: n.maximum,
-                                    note: n.doc.note.clone(),
-                                    dev_note: n.doc.dev.clone(),
+                                    note: raw_note(&n.doc.note),
+                                    dev_note: raw_note(&n.doc.dev),
                                 }
                             })
                             .collect(),
@@ -176,8 +213,8 @@ impl World {
                         situational: w.situational,
                         hits_group: w.hits_group,
                         categories: w.categories.clone(),
-                        note: w.doc.note.clone(),
-                        dev_note: w.doc.dev.clone(),
+                        note: raw_note(&w.doc.note),
+                        dev_note: raw_note(&w.doc.dev),
                     })
                     .collect(),
                 categories: opt_vec(self.weapon_categories.clone()),
@@ -211,9 +248,9 @@ impl World {
             name: raw::TechName(t.name.clone()),
             tech_requires: self.raw_requires(&t.tech_requires, None),
             other_requires: self.raw_requires(&t.other_requires, None),
-            note: t.doc.note.clone(),
-            detail_note: t.doc.detail.clone(),
-            dev_note: t.doc.dev.clone(),
+            note: raw_note(&t.doc.note),
+            detail_note: raw_note(&t.doc.detail),
+            dev_note: raw_note(&t.doc.dev),
             extension_techs: opt_vec(t.extensions.iter().map(|e| self.raw_tech(*e)).collect()),
         }
     }
@@ -288,7 +325,7 @@ impl World {
             M::Helper(id) => R::Named(raw::Named::Helper(raw::HelperName(self[*id].name.clone()))),
             M::Notable(id) => {
                 let notable = room.and_then(|room| room.notable(*id)).expect("notables resolve within their room");
-                R::Notable(notable.name.clone())
+                R::Notable(notable.name.clone().unwrap_or_default())
             }
             M::Internal(id) => R::Named(raw::Named::Internal(raw::InternalName(self[*id].clone()))),
             M::DisableEquipment(item) => R::DisableEquipment(*item),
@@ -420,8 +457,8 @@ impl World {
                 R::ComeInSpaceJumping { speed_booster: *speed_booster, min_tiles: speed.min, max_tiles: speed.max }
             }
             M::BlueSpaceJumping { extra_speed } => R::ComeInBlueSpaceJumping {
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
             },
             M::Shinecharging { runway } => R::ComeInShinecharging(raw_runway(runway)),
             M::GettingBlueSpeed { runway, extra_speed } => R::ComeInGettingBlueSpeed {
@@ -431,8 +468,8 @@ impl World {
                 gentle_down_tiles: nonzero(runway.slopes.gentle_down),
                 steep_up_tiles: nonzero(runway.slopes.steep_up),
                 steep_down_tiles: nonzero(runway.slopes.steep_down),
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
             },
             M::Shinecharged => R::ComeInShinecharged {},
             M::ShinechargedJumping => R::ComeInShinechargedJumping {},
@@ -443,20 +480,20 @@ impl World {
             M::DoorStuckSetup => R::ComeInWithDoorStuckSetup {},
             M::Speedballing { runway, extra_speed } => R::ComeInSpeedballing {
                 runway: raw_runway(runway),
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
             },
             M::TemporaryBlue { direction } => R::ComeInWithTemporaryBlue { direction: *direction },
             M::Spinning { speed_booster, unusable_tiles, extra_speed } => R::ComeInSpinning {
                 speed_booster: *speed_booster,
                 unusable_tiles: *unusable_tiles,
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
             },
             M::BlueSpinning { unusable_tiles, extra_speed } => R::ComeInBlueSpinning {
                 unusable_tiles: *unusable_tiles,
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
             },
             M::Mockball { speed_booster, run_up } => R::ComeInWithMockball {
                 speed_booster: *speed_booster,
@@ -471,8 +508,8 @@ impl World {
             },
             M::BlueSpringBallBounce { movement, extra_speed, min_landing_tiles } => R::ComeInWithBlueSpringBallBounce {
                 movement_type: *movement,
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
                 min_landing_tiles: *min_landing_tiles,
             },
             M::StoredFallSpeed { tiles } => R::ComeInWithStoredFallSpeed { fall_speed_in_tiles: *tiles },
@@ -507,9 +544,9 @@ impl World {
                         obstructions: p.obstructions.clone(),
                         environment: Some(p.environment),
                         requires: opt_vec(self.raw_requires(&p.requires, Some(room))),
-                        note: p.doc.note.clone(),
-                        detail_note: p.doc.detail.clone(),
-                        dev_note: p.doc.dev.clone(),
+                        note: raw_note(&p.doc.note),
+                        detail_note: raw_note(&p.doc.detail),
+                        dev_note: raw_note(&p.doc.dev),
                     })
                     .collect(),
             },
@@ -525,7 +562,7 @@ impl World {
             kind,
             comes_through_toilet: Some(e.through_toilet),
             comes_in_heated: Some(e.heated),
-            dev_note: e.dev_note.clone(),
+            dev_note: raw_note(&e.dev_note),
         }
     }
 
@@ -544,7 +581,7 @@ impl World {
                 starting_steep_down_tiles: nonzero(runway.slopes.starting_steep_down),
                 starting_gentle_down_tiles: nonzero(runway.slopes.starting_gentle_down),
                 starting_stutterless_tiles: nonzero(runway.slopes.starting_stutterless),
-                min_extra_run_speed: min_extra_speed.clone(),
+                min_extra_run_speed: raw_speed(min_extra_speed),
                 heated: *heated,
             },
             M::Shinecharged => R::LeaveShinecharged {},
@@ -552,29 +589,29 @@ impl World {
             M::Spark { position, grounded } => R::LeaveWithSpark { position: *position, grounded: *grounded },
             M::Spinning { remote, extra_speed, blue } => R::LeaveSpinning {
                 remote_runway: raw_runway(remote),
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
                 blue: Some(*blue),
             },
             M::Mockball { remote, landing, extra_speed, blue } => R::LeaveWithMockball {
                 remote_runway: raw_runway(remote),
                 landing_runway: raw_runway(landing),
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
                 blue: Some(*blue),
             },
             M::SpringBallBounce { remote, landing, movement, extra_speed, blue } => R::LeaveWithSpringBallBounce {
                 remote_runway: raw_runway(remote),
                 landing_runway: raw_runway(landing),
                 movement_type: *movement,
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
                 blue: Some(*blue),
             },
             M::SpaceJumping { remote, extra_speed, blue } => R::LeaveSpaceJumping {
                 remote_runway: raw_runway(remote),
-                min_extra_run_speed: extra_speed.min.clone(),
-                max_extra_run_speed: extra_speed.max.clone(),
+                min_extra_run_speed: raw_speed(&extra_speed.min),
+                max_extra_run_speed: raw_speed(&extra_speed.max),
                 blue: Some(*blue),
             },
             M::StoredFallSpeed { tiles } => R::LeaveWithStoredFallSpeed { fall_speed_in_tiles: *tiles },
@@ -621,7 +658,7 @@ impl World {
         raw::Strat {
             id,
             link,
-            name: s.name.clone(),
+            name: s.name.clone().unwrap_or_default(),
             entrance_condition: s.entry.as_ref().map(|e| self.raw_entry(e, room)),
             starts_with_shine_charge: s.starts_shinecharged.then_some(true),
             requires: self.raw_requires(&s.requires, r),
@@ -640,8 +677,8 @@ impl World {
                         types: u.types.clone(),
                         requires: opt_vec(self.raw_requires(&u.requires, r)),
                         use_implicit_requires: Some(u.use_implicit_requires),
-                        note: u.doc.note.clone(),
-                        dev_note: u.doc.dev.clone(),
+                        note: raw_note(&u.doc.note),
+                        dev_note: raw_note(&u.doc.dev),
                     })
                     .collect(),
             ),
@@ -658,21 +695,21 @@ impl World {
                 s.failures
                     .iter()
                     .map(|f| raw::StratFailure {
-                        name: f.name.clone(),
+                        name: f.name.clone().unwrap_or_default(),
                         leads_to_node: match f.outcome {
                             FailureOutcome::LeadsTo(node) => Some(node),
                             _ => None,
                         },
                         cost: opt_vec(self.raw_requires(&f.cost, r)),
                         softlock: (f.outcome == FailureOutcome::Softlock).then_some(true),
-                        note: f.doc.note.clone(),
-                        dev_note: f.doc.dev.clone(),
+                        note: raw_note(&f.doc.note),
+                        dev_note: raw_note(&f.doc.dev),
                     })
                     .collect(),
             ),
-            note: s.doc.note.clone(),
-            detail_note: s.doc.detail.clone(),
-            dev_note: s.doc.dev.clone(),
+            note: raw_note(&s.doc.note),
+            detail_note: raw_note(&s.doc.detail),
+            dev_note: raw_note(&s.doc.dev),
         }
     }
 
@@ -708,8 +745,8 @@ impl World {
                         lock: l.active_when.as_ref().map(|list| self.raw_requires(list, Some(room))),
                         unlock_strats: l.unlock_strats.iter().map(|s| self.raw_strat(s, None, None, room)).collect(),
                         yields: self.raw_flags(&l.yields),
-                        note: l.doc.note.clone(),
-                        dev_note: l.doc.dev.clone(),
+                        note: raw_note(&l.doc.note),
+                        dev_note: raw_note(&l.doc.dev),
                     })
                     .collect(),
             ),
@@ -726,8 +763,8 @@ impl World {
             ),
             yields: self.raw_flags(&n.yields),
             map_tile_mask: n.map_tiles.clone(),
-            note: n.doc.note.clone(),
-            dev_note: n.doc.dev.clone(),
+            note: raw_note(&n.doc.note),
+            dev_note: raw_note(&n.doc.dev),
         };
         match &n.kind {
             NodeKind::Door(d) => {
@@ -746,15 +783,15 @@ impl World {
                     DoorStyle::Yellow => S::Yellow,
                 };
                 out.door_orientation = d.orientation;
-                out.node_address = d.address.clone();
+                out.node_address = d.address.map(raw_hex);
                 out.door_environments = opt_vec(
                     d.environments
                         .iter()
                         .map(|e| raw::DoorEnvironment {
                             physics: e.physics,
                             entrance_nodes: e.entrances.clone(),
-                            note: e.doc.note.clone(),
-                            dev_note: e.doc.dev.clone(),
+                            note: raw_note(&e.doc.note),
+                            dev_note: raw_note(&e.doc.dev),
                         })
                         .collect(),
                 );
@@ -769,7 +806,7 @@ impl World {
                 out.twin_door_addresses = opt_vec(
                     d.twins
                         .iter()
-                        .map(|t| raw::TwinDoorAddress { room_address: t.room_address.clone(), door_address: t.door_address.clone() })
+                        .map(|t| raw::TwinDoorAddress { room_address: raw_hex(t.room_address), door_address: raw_hex(t.door_address) })
                         .collect(),
                 );
             }
@@ -777,13 +814,13 @@ impl World {
                 out.node_type = T::Entrance;
                 out.node_sub_type = transit(t);
                 out.door_orientation = Some(*orientation);
-                out.node_address = address.clone();
+                out.node_address = address.map(raw_hex);
             }
             NodeKind::Exit { transit: t, orientation, address } => {
                 out.node_type = T::Exit;
                 out.node_sub_type = transit(t);
                 out.door_orientation = Some(*orientation);
-                out.node_address = address.clone();
+                out.node_address = address.map(raw_hex);
             }
             NodeKind::Item { item, placement, address } => {
                 out.node_type = T::Item;
@@ -793,7 +830,7 @@ impl World {
                     ItemPlacement::Visible => S::Visible,
                 };
                 out.node_item = Some(*item);
-                out.node_address = Some(address.clone());
+                out.node_address = Some(raw_hex(*address));
             }
             NodeKind::Junction(kind) => {
                 out.node_type = T::Junction;
@@ -827,15 +864,15 @@ impl World {
             area: r.area.clone(),
             subarea: r.subarea.clone(),
             subsubarea: r.subsubarea.clone(),
-            room_address: r.address.clone(),
+            room_address: r.address.map(raw_hex),
             room_environments: r
                 .environments
                 .iter()
                 .map(|e| raw::RoomEnvironment {
                     heated: e.heated,
                     entrance_nodes: e.entrances.clone(),
-                    note: e.doc.note.clone(),
-                    dev_note: e.doc.dev.clone(),
+                    note: raw_note(&e.doc.note),
+                    dev_note: raw_note(&e.doc.dev),
                 })
                 .collect(),
             map_tile_mask: r.map_tiles.clone(),
@@ -845,10 +882,10 @@ impl World {
                     .iter()
                     .map(|o| raw::Obstacle {
                         id: raw::ObstacleId(o.key.clone()),
-                        name: o.name.clone(),
+                        name: o.name.clone().unwrap_or_default(),
                         obstacle_type: o.kind,
-                        note: o.doc.note.clone(),
-                        dev_note: o.doc.dev.clone(),
+                        note: raw_note(&o.doc.note),
+                        dev_note: raw_note(&o.doc.dev),
                     })
                     .collect(),
             ),
@@ -862,15 +899,15 @@ impl World {
                         };
                         raw::RoomEnemy {
                             id: e.key.clone(),
-                            group_name: e.group_name.clone(),
+                            group_name: e.group_name.clone().unwrap_or_default(),
                             enemy_name: self[e.enemy].name.clone(),
                             quantity: e.quantity,
                             home_nodes,
                             between_nodes,
                             spawn: e.spawn.as_ref().map(|list| self.raw_requires(list, Some(r))),
                             stop_spawn: e.stop_spawn.as_ref().map(|list| self.raw_requires(list, Some(r))),
-                            note: e.doc.note.clone(),
-                            dev_note: e.doc.dev.clone(),
+                            note: raw_note(&e.doc.note),
+                            dev_note: raw_note(&e.doc.dev),
                         }
                     })
                     .collect(),
@@ -885,17 +922,17 @@ impl World {
                     .iter()
                     .map(|n| raw::Notable {
                         id: n.id,
-                        name: n.name.clone(),
+                        name: n.name.clone().unwrap_or_default(),
                         wall_jump_avoid: n.wall_jump_avoid.then_some(true),
-                        note: n.note.clone(),
-                        dev_note: n.dev_note.clone(),
+                        note: raw_note(&n.note).unwrap_or(raw::Note::Text(String::new())),
+                        dev_note: raw_note(&n.dev_note),
                     })
                     .collect(),
             ),
             next_strat_id: None,
             next_notable_id: None,
-            note: r.doc.note.clone(),
-            dev_note: r.doc.dev.clone(),
+            note: raw_note(&r.doc.note),
+            dev_note: raw_note(&r.doc.dev),
         }
     }
 
@@ -918,7 +955,7 @@ impl World {
             drops: e.drops,
             buffed_drops: e.buffed_drops,
             farmable_drops: e.farmable_drops,
-            dims: raw::Dimensions { w: e.width, h: e.height, note: e.size_doc.note.clone(), dev_note: e.size_doc.dev.clone() },
+            dims: raw::Dimensions { w: e.width, h: e.height, note: raw_note(&e.size_doc.note), dev_note: raw_note(&e.size_doc.dev) },
             freezable: e.freezable,
             grapplable: e.grapplable,
             invul: self.selector_names(&e.invulnerable_to),
@@ -928,8 +965,8 @@ impl World {
                 .map(|(selector, value)| raw::DamageMultiplier { weapon: self.selector_name(selector), value: *value })
                 .collect(),
             areas: opt_vec(e.areas.clone()),
-            note: e.doc.note.clone(),
-            dev_note: e.doc.dev.clone(),
+            note: raw_note(&e.doc.note),
+            dev_note: raw_note(&e.doc.dev),
         }
     }
 
@@ -951,8 +988,8 @@ impl World {
                         name: w.name.clone(),
                         window_percent: w.percent,
                         requires: self.raw_requires(&w.requires, None),
-                        note: w.doc.note.clone(),
-                        dev_note: w.doc.dev.clone(),
+                        note: raw_note(&w.doc.note),
+                        dev_note: raw_note(&w.doc.dev),
                     })
                     .collect(),
             ),
@@ -964,36 +1001,44 @@ impl World {
                         attack: self.attack_names(&d.attack).1,
                         frequency_frames: d.frequency_frames,
                         avoiding_requires: self.raw_requires(&d.avoiding_requires, None),
-                        note: d.doc.note.clone(),
-                        dev_note: d.doc.dev.clone(),
+                        note: raw_note(&d.doc.note),
+                        dev_note: raw_note(&d.doc.dev),
                     })
                     .collect(),
             ),
             particle_frequency_frames: s.particle_frequency_frames,
-            note: s.doc.note.clone(),
-            dev_note: s.doc.dev.clone(),
+            note: raw_note(&s.doc.note),
+            dev_note: raw_note(&s.doc.dev),
         }
     }
 
     fn raw_connection(&self, c: &Connection) -> raw::Connection {
-        let end = |e: &ConnectionEnd| raw::ConnectionNode {
-            area: e.label.area.clone(),
-            subarea: e.label.subarea.clone(),
+        let end = |e: &ConnectionEnd| {
+            let label = e.label.clone().unwrap_or(ConnectionLabel {
+                area: String::new(),
+                subarea: String::new(),
+                room: String::new(),
+                node: String::new(),
+            });
+            raw::ConnectionNode {
+            area: label.area,
+            subarea: label.subarea,
             room_id: self[e.room].source_id,
-            room_name: e.label.room.clone(),
+            room_name: label.room,
             node_id: e.node,
-            node_name: e.label.node.clone(),
+            node_name: label.node,
             position: e.position,
-            note: e.doc.note.clone(),
-            dev_note: e.doc.dev.clone(),
+            note: raw_note(&e.doc.note),
+            dev_note: raw_note(&e.doc.dev),
+            }
         };
         raw::Connection {
             connection_type: c.kind,
             direction: c.direction,
             description: c.description.clone(),
             nodes: [end(&c.ends[0]), end(&c.ends[1])],
-            note: c.doc.note.clone(),
-            dev_note: c.doc.dev.clone(),
+            note: raw_note(&c.doc.note),
+            dev_note: raw_note(&c.doc.dev),
         }
     }
 }
