@@ -1,7 +1,7 @@
 //! Logical requirements, the expression language used throughout the data.
 
-use crate::common::*;
-use crate::items::Item;
+use crate::raw::common::*;
+use crate::raw::items::Item;
 use serde::de::{self, value::MapAccessDeserializer, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::skip_serializing_none;

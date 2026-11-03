@@ -2,33 +2,35 @@
 //!
 //! Run with: `cargo run --example summary -- path/to/sm-json-data`
 
-use sm_json_data::{GameData, Numeric, Requirement};
+use sm_json_data::model::{NodeKind, Quantity, Requirement, World};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::args().nth(1).ok_or("usage: summary <sm-json-data path>")?;
-    let data = GameData::load(root)?;
+    let world = World::load(root)?;
 
-    let strats: usize = data.rooms.iter().map(|room| room.all_strats().count()).sum();
-    println!("{} rooms, {strats} strats", data.rooms.len());
-    println!("{} techs, {} helpers", data.tech.all_techs().count(), data.helpers.all_helpers().count());
-    println!("{} enemies, {} bosses", data.enemies.enemies.len(), data.bosses.enemies.len());
+    let strats: usize = world.rooms.iter().map(|room| room.all_strats().count()).sum();
+    let nodes = || world.rooms.iter().flat_map(|room| &room.nodes);
+    let doors = nodes().filter(|node| matches!(node.kind, NodeKind::Door(_))).count();
+    let items = nodes().filter(|node| matches!(node.kind, NodeKind::Item { .. })).count();
+    println!("{} rooms, {doors} doors, {items} item locations, {strats} strats", world.rooms.len());
+    println!("{} techs, {} helpers, {} enemies", world.techs.len(), world.helpers.len(), world.enemies.len());
 
     let mut heat = Vec::new();
-    for room in &data.rooms {
+    for room in &world.rooms {
         for strat in room.all_strats() {
-            let mut frames = 0;
+            let mut most = 0;
             for requirement in &strat.requires {
                 requirement.walk(&mut |r| {
-                    if let Requirement::HeatFrames(Numeric::Literal(n)) = r {
-                        frames = frames.max(*n);
+                    if let Requirement::Heat { frames: Quantity::Const(frames), .. } = r {
+                        most = most.max(*frames);
                     }
                 });
             }
-            heat.push((frames, &room.name, &strat.name));
+            heat.push((most, &room.name, &strat.name));
         }
     }
     heat.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    println!("\nLargest single heatFrames requirements:");
+    println!("\nLargest single heat requirements:");
     for (frames, room, strat) in heat.iter().take(5) {
         println!("  {frames:>5}  {room}: {strat}");
     }

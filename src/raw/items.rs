@@ -1,6 +1,6 @@
 //! `items.json`: items, game flags, and the initial game state.
 
-use crate::common::*;
+use crate::raw::common::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::str::FromStr;

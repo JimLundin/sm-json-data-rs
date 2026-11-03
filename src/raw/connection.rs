@@ -1,6 +1,6 @@
 //! Connection files under `connection/`.
 
-use crate::common::*;
+use crate::raw::common::*;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 

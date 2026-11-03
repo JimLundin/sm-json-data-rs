@@ -1,46 +1,28 @@
-//! Typed Rust bindings for [sm-json-data], the community model of Super Metroid's
-//! layout and logic.
+//! Rust bindings for [sm-json-data], the community model of Super Metroid's layout
+//! and logic. They accept both upstream and Map Rando's fork of the data.
 //!
-//! The types mirror the JSON faithfully: optional fields stay `Option`, unknown
-//! fields are rejected, and serializing a value reproduces its file's content.
-//! Schema defaults are noted on fields rather than applied.
+//! - [`model`] is the domain model most code should use, built with [`World::load`].
+//! - [`raw`] mirrors the JSON files, for parsing and writing them.
 //!
 //! ```no_run
-//! use sm_json_data::{GameData, Requirement};
+//! use sm_json_data::model::{Requirement, World};
 //!
-//! let data = GameData::load("path/to/sm-json-data")?;
-//! for room in &data.rooms {
-//!     for strat in room.all_strats() {
-//!         for requirement in &strat.requires {
-//!             requirement.walk(&mut |r| {
-//!                 if let Requirement::HeatFrames(frames) = r {
-//!                     println!("{}: {} needs {frames:?}", room.name, strat.name);
-//!                 }
-//!             });
-//!         }
+//! let world = World::load("path/to/sm-json-data")?;
+//! let room = &world[world.room_id("Morph Ball Room").unwrap()];
+//! for strat in room.all_strats() {
+//!     for requirement in &strat.requires {
+//!         requirement.walk(&mut |r| {
+//!             if let Requirement::Tech(tech) = r {
+//!                 println!("{} needs {}", strat.name, world[*tech].name);
+//!             }
+//!         });
 //!     }
 //! }
-//! # Ok::<(), sm_json_data::LoadError>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! [sm-json-data]: https://github.com/vg-json-data/sm-json-data
+//! [`World::load`]: model::World::load
 
-mod common;
-mod connection;
-mod enemy;
-mod game_data;
-mod items;
-mod logic;
-mod requirement;
-mod room;
-mod strat;
-
-pub use common::*;
-pub use connection::*;
-pub use enemy::*;
-pub use game_data::*;
-pub use items::*;
-pub use logic::*;
-pub use requirement::*;
-pub use room::*;
-pub use strat::*;
+pub mod model;
+pub mod raw;

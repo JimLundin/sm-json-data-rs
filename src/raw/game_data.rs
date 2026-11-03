@@ -1,6 +1,6 @@
 //! Loading a whole checkout of the data at once.
 
-use crate::{BossScenariosFile, ConnectionFile, EnemiesFile, HelpersFile, ItemsFile, NumericsFile, Room, TechFile, WeaponsFile};
+use crate::raw::{BossScenariosFile, ConnectionFile, EnemiesFile, HelpersFile, ItemsFile, NumericsFile, Room, TechFile, WeaponsFile};
 use serde::de::DeserializeOwned;
 use std::fmt;
 use std::path::{Path, PathBuf};

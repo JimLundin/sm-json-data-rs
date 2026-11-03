@@ -6,7 +6,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
-use sm_json_data::*;
+use sm_json_data::raw::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

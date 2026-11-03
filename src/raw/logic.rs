@@ -1,7 +1,7 @@
 //! `tech.json`, `helpers.json`, and `numerics.json`.
 
-use crate::common::*;
-use crate::requirement::Requirement;
+use crate::raw::common::*;
+use crate::raw::requirement::Requirement;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 

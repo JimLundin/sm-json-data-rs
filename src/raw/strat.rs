@@ -1,7 +1,7 @@
 //! Strats and the entrance and exit conditions that connect them across doors.
 
-use crate::common::*;
-use crate::requirement::{EnemyDrop, Requirement, Runway};
+use crate::raw::common::*;
+use crate::raw::requirement::{EnemyDrop, Requirement, Runway};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::skip_serializing_none;

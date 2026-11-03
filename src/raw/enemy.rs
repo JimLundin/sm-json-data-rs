@@ -1,8 +1,8 @@
 //! `enemies/main.json`, `enemies/bosses/main.json`, `enemies/bosses/scenarios.json`,
 //! and `weapons/main.json`.
 
-use crate::common::*;
-use crate::requirement::Requirement;
+use crate::raw::common::*;
+use crate::raw::requirement::Requirement;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 

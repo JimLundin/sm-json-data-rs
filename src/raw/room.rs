@@ -1,9 +1,9 @@
 //! Room files under `region/`.
 
-use crate::common::*;
-use crate::items::Item;
-use crate::requirement::Requirement;
-use crate::strat::Strat;
+use crate::raw::common::*;
+use crate::raw::items::Item;
+use crate::raw::requirement::Requirement;
+use crate::raw::strat::Strat;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
