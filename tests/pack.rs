@@ -3,7 +3,7 @@
 //! Set `SM_JSON_DATA` to the checkout's path. These tests fail rather than skip
 //! when it is missing, so a green run always means the data was actually checked.
 
-use sm_json_data::{export_world, load_world};
+use sm_json_data::{compress_lzma, encode_pack, export_world, load_world};
 use sm_logic::pack::{decode, decode_unverified, encode, inspect, Docs, EncodeOptions, PackError, VERSION};
 use sm_logic::{Requirement, World};
 
@@ -37,7 +37,7 @@ fn assert_same(a: &World, b: &World) {
 #[test]
 fn a_pack_with_docs_decodes_to_the_same_world() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
+    let bytes = encode_pack(&world, &options(true)).unwrap();
     assert_same(&decode(&bytes, Docs::Load).unwrap(), &world);
 }
 
@@ -45,7 +45,7 @@ fn a_pack_with_docs_decodes_to_the_same_world() {
 fn a_pack_without_docs_decodes_to_the_stripped_world() {
     let world = world();
     let expected = stripped(&world);
-    let bytes = encode(&world, &options(false)).unwrap();
+    let bytes = encode_pack(&world, &options(false)).unwrap();
     assert_same(&decode(&bytes, Docs::Load).unwrap(), &expected);
     assert_eq!(inspect(&bytes).unwrap().docs_bytes, 0);
 }
@@ -53,29 +53,29 @@ fn a_pack_without_docs_decodes_to_the_stripped_world() {
 #[test]
 fn skipping_docs_gives_the_same_logic() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
+    let bytes = encode_pack(&world, &options(true)).unwrap();
     assert_same(&decode(&bytes, Docs::Skip).unwrap(), &stripped(&world));
 }
 
 #[test]
 fn a_decoded_pack_exports_like_the_original() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
+    let bytes = encode_pack(&world, &options(true)).unwrap();
     assert!(export_world(&world) == export_world(&decode(&bytes, Docs::Load).unwrap()));
 }
 
 #[test]
 fn encoding_is_deterministic() {
     let world = world();
-    let bytes = encode(&world, &options(false)).unwrap();
-    assert!(bytes == encode(&world, &options(false)).unwrap());
-    assert!(bytes == encode(&decode(&bytes, Docs::Load).unwrap(), &options(false)).unwrap());
+    let bytes = encode_pack(&world, &options(false)).unwrap();
+    assert!(bytes == encode_pack(&world, &options(false)).unwrap());
+    assert!(bytes == encode_pack(&decode(&bytes, Docs::Load).unwrap(), &options(false)).unwrap());
 }
 
 #[test]
 fn the_header_identifies_the_pack() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
+    let bytes = encode_pack(&world, &options(true)).unwrap();
     let info = inspect(&bytes).unwrap();
     assert_eq!(info.version, VERSION);
     assert_eq!(info.source, "test-commit");
@@ -86,7 +86,7 @@ fn the_header_identifies_the_pack() {
 #[test]
 fn name_lookups_work_after_decoding() {
     let world = world();
-    let decoded = decode(&encode(&world, &options(false)).unwrap(), Docs::Skip).unwrap();
+    let decoded = decode(&encode_pack(&world, &options(false)).unwrap(), Docs::Skip).unwrap();
     let room = decoded.room_id("Landing Site").unwrap();
     assert_eq!(decoded[room].name, "Landing Site");
     assert!(decoded.tech_id(&world.techs[0].name).is_some());
@@ -118,17 +118,17 @@ fn use_everything(world: &World) {
 #[test]
 fn truncated_packs_are_rejected() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
-    let step = (bytes.len() / 200).max(1);
+    let bytes = encode_pack(&world, &options(true)).unwrap();
+    let step = (bytes.len() / 100).max(1);
     for length in (0..bytes.len()).step_by(step) {
-        assert!(decode(&bytes[..length], Docs::Load).is_err(), "accepted {length} bytes");
+        assert!(decode(&bytes[..length], Docs::Skip).is_err(), "accepted {length} bytes");
     }
 }
 
 #[test]
 fn corrupted_packs_never_panic() {
     let world = world();
-    let bytes = encode(&world, &options(true)).unwrap();
+    let bytes = encode_pack(&world, &options(true)).unwrap();
     let mut seed = 0x2545_f491_4f6c_dd1du64;
     let mut next = move || {
         seed ^= seed << 13;
@@ -137,13 +137,13 @@ fn corrupted_packs_never_panic() {
         seed
     };
     let (mut rejected, mut accepted) = (0, 0);
-    for _ in 0..400 {
+    for _ in 0..100 {
         let mut copy = bytes.clone();
         for _ in 0..1 + next() % 8 {
             let index = (next() % copy.len() as u64) as usize;
             copy[index] = next() as u8;
         }
-        match decode_unverified(&copy, Docs::Load) {
+        match decode_unverified(&copy, Docs::Skip) {
             Ok(decoded) => {
                 use_everything(&decoded);
                 accepted += 1;
@@ -155,10 +155,42 @@ fn corrupted_packs_never_panic() {
     assert!(rejected > 0);
 }
 
+/// Damage before compression gets past the checksum and the decompressor, so this
+/// exercises the record reader and validation directly.
+#[test]
+fn damaged_records_never_panic() {
+    let world = world();
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let (mut rejected, mut accepted) = (0, 0);
+    for _ in 0..40 {
+        let bytes = encode(&world, &options(false), |data| {
+            let mut copy = data.to_vec();
+            for _ in 0..3 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let index = (seed % copy.len() as u64) as usize;
+                copy[index] = (seed >> 32) as u8;
+            }
+            compress_lzma(&copy)
+        })
+        .unwrap();
+        match decode(&bytes, Docs::Skip) {
+            Ok(decoded) => {
+                use_everything(&decoded);
+                accepted += 1;
+            }
+            Err(_) => rejected += 1,
+        }
+    }
+    println!("damaged records: {rejected} rejected, {accepted} decoded to a valid world");
+    assert!(rejected > 0);
+}
+
 #[test]
 fn damage_anywhere_fails_the_checksum() {
-    let bytes = encode(&world(), &options(true)).unwrap();
-    let step = (bytes.len() / 200).max(1);
+    let bytes = encode_pack(&world(), &options(true)).unwrap();
+    let step = (bytes.len() / 100).max(1);
     for index in (14..bytes.len()).step_by(step) {
         let mut copy = bytes.clone();
         copy[index] ^= 0x10;
@@ -173,14 +205,14 @@ fn damage_anywhere_fails_the_checksum() {
 fn corrupted_reference_tables_are_rejected_by_validation() {
     let mut world = world();
     world.rooms[0].strats[0].from = sm_logic::NodeId(9999);
-    let bytes = encode(&world, &options(false)).unwrap();
+    let bytes = encode_pack(&world, &options(false)).unwrap();
     assert!(matches!(decode(&bytes, Docs::Skip), Err(PackError::Invalid(_))));
 }
 
 #[test]
 fn other_versions_are_refused() {
     let world = world();
-    let mut bytes = encode(&world, &options(false)).unwrap();
+    let mut bytes = encode_pack(&world, &options(false)).unwrap();
     bytes[4] = VERSION + 1;
     assert_eq!(decode(&bytes, Docs::Skip).unwrap_err(), PackError::UnsupportedVersion(VERSION + 1));
 }

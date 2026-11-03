@@ -15,6 +15,7 @@
 
 mod catalog;
 mod logic;
+mod lzma;
 pub mod pack;
 mod room;
 mod shared;

@@ -2,32 +2,36 @@
 //!
 //! ```text
 //! magic "SMLP" | version u8 | flags u8 | checksum u64 | source text | logic length | docs length
-//! logic: strings, requirements, requirement lists, door entries, door exits, records
-//! docs (optional): strings, then the documentation of each entry, exit and record
+//! logic section, compressed
+//! docs section, compressed (optional)
 //! ```
 //!
-//! Integers are little-endian base-128 varints, so small values take one byte.
-//! Strings, requirements, requirement lists and door conditions are stored once in
-//! a table and referenced by index; a table entry can only refer to earlier entries.
+//! Each section is a `.lzma` stream, which build tools produce and [`crate`] decodes
+//! with its own small decoder. Inside, data is written in the order of the model's
+//! fields, using varints for integers. Nothing is deduplicated by hand, because the
+//! compressor shares repeated data better than tables did, and doing without them
+//! also makes the decoder smaller.
+//!
 //! Everything nothing in the logic depends on goes in the docs section, so a reader
 //! can skip it and a pack can leave it out entirely. Decoding always validates the
 //! result, so a decoded [`World`] upholds the same guarantees as an imported one.
 
 use crate::*;
-use std::collections::HashMap;
+use crate::lzma;
 use std::fmt;
-use std::hash::Hash;
 
 const MAGIC: &[u8; 4] = b"SMLP";
 /// The format version this crate reads and writes.
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 const FLAG_DOCS: u8 = 1;
 /// Where the checksum sits; it covers everything after itself.
 const CHECKSUM_AT: usize = 6;
 const BODY_AT: usize = CHECKSUM_AT + 8;
-/// The most requirement nodes a pack may expand to, which stops a small corrupt file
-/// from expanding exponentially through shared tables.
-const EXPANSION_BUDGET: u64 = 1 << 26;
+/// The largest a section may decompress to, which stops a corrupt file from using
+/// unbounded memory.
+const SECTION_LIMIT: usize = 1 << 28;
+/// How deeply expressions may nest, which stops a corrupt file overflowing the stack.
+const DEPTH_LIMIT: u32 = 64;
 
 /// Why a pack could not be written or read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +41,7 @@ pub enum PackError {
     Truncated,
     /// The content doesn't match its checksum, so the file is damaged.
     Corrupt,
-    Invalid(String),
+    Invalid(&'static str),
 }
 
 impl fmt::Display for PackError {
@@ -75,40 +79,16 @@ pub enum Docs {
 pub struct PackInfo {
     pub version: u8,
     pub source: String,
+    /// Compressed size of the logic section.
     pub logic_bytes: usize,
+    /// Compressed size of the docs section, or zero without one.
     pub docs_bytes: usize,
 }
-
-#[derive(Default)]
-struct Pool<K> {
-    ids: HashMap<K, u32>,
-    items: Vec<K>,
-}
-
-impl<K: Clone + Eq + Hash> Pool<K> {
-    fn intern(&mut self, key: K) -> u32 {
-        if let Some(id) = self.ids.get(&key) {
-            return *id;
-        }
-        let id = u32::try_from(self.items.len()).expect("fewer than 2^32 table entries");
-        self.items.push(key.clone());
-        self.ids.insert(key, id);
-        id
-    }
-}
-
-type Encoded = (Vec<u8>, Vec<u8>);
 
 struct Writer {
     logic: Vec<u8>,
     docs: Vec<u8>,
     docs_enabled: bool,
-    strings: Pool<String>,
-    doc_strings: Pool<String>,
-    requirements: Pool<Encoded>,
-    lists: Pool<Encoded>,
-    entries: Pool<Encoded>,
-    exits: Pool<Encoded>,
     previous_strat: i64,
 }
 
@@ -137,14 +117,6 @@ impl Writer {
         put_varint(&mut self.docs, value);
     }
 
-    /// Runs `write` against empty buffers and returns what it produced.
-    fn capture(&mut self, write: impl FnOnce(&mut Writer)) -> Encoded {
-        let logic = std::mem::take(&mut self.logic);
-        let docs = std::mem::take(&mut self.docs);
-        write(self);
-        (std::mem::replace(&mut self.logic, logic), std::mem::replace(&mut self.docs, docs))
-    }
-
     fn doc_text(&mut self, text: &Option<String>) {
         if !self.docs_enabled {
             return;
@@ -152,8 +124,8 @@ impl Writer {
         match text {
             None => self.doc_varint(0),
             Some(text) => {
-                let id = self.doc_strings.intern(text.clone());
-                self.doc_varint(u64::from(id) + 1);
+                self.doc_varint(text.len() as u64 + 1);
+                self.docs.extend_from_slice(text.as_bytes());
             }
         }
     }
@@ -179,20 +151,10 @@ impl Writer {
     }
 }
 
-struct Tables {
-    strings: Vec<String>,
-    doc_strings: Vec<String>,
-    requirements: Vec<(Requirement, u64)>,
-    lists: Vec<(Vec<Requirement>, u64)>,
-    entries: Vec<(DoorEntry, u64)>,
-    exits: Vec<(DoorExit, u64)>,
-}
-
 struct Reader<'a> {
     logic: &'a [u8],
     docs: Option<&'a [u8]>,
-    tables: Tables,
-    budget: u64,
+    depth: u32,
     previous_strat: i64,
 }
 
@@ -206,11 +168,20 @@ fn take_varint(bytes: &mut &[u8]) -> Result<u64, PackError> {
             return Ok(value);
         }
     }
-    Err(PackError::Invalid("varint is too long".to_owned()))
+    Err(PackError::Invalid("varint is too long"))
 }
 
-fn invalid<T>(problem: impl Into<String>) -> Result<T, PackError> {
-    Err(PackError::Invalid(problem.into()))
+fn invalid<T>(problem: &'static str) -> Result<T, PackError> {
+    Err(PackError::Invalid(problem))
+}
+
+fn take_text(bytes: &mut &[u8], length: usize) -> Result<String, PackError> {
+    if length > bytes.len() {
+        return Err(PackError::Truncated);
+    }
+    let (text, rest) = bytes.split_at(length);
+    *bytes = rest;
+    String::from_utf8(text.to_vec()).or_else(|_| invalid("text is not UTF-8"))
 }
 
 impl Reader<'_> {
@@ -228,9 +199,9 @@ impl Reader<'_> {
     fn doc_text(&mut self) -> Result<Option<String>, PackError> {
         match self.doc_varint()? {
             0 => Ok(None),
-            id => match self.tables.doc_strings.get((id - 1) as usize) {
-                Some(text) => Ok(Some(text.clone())),
-                None => invalid("doc string index out of range"),
+            length => match &mut self.docs {
+                Some(docs) => take_text(docs, (length - 1) as usize).map(Some),
+                None => Err(PackError::Truncated),
             },
         }
     }
@@ -246,18 +217,23 @@ impl Reader<'_> {
                 }
                 let mut lines = Vec::with_capacity(count);
                 for _ in 0..count {
-                    lines.push(self.doc_text()?.ok_or(PackError::Invalid("empty note line".to_owned()))?);
+                    lines.push(self.doc_text()?.ok_or(PackError::Invalid("empty note line"))?);
                 }
                 Ok(Some(Note::Lines(lines)))
             }
-            kind => invalid(format!("unknown note kind {kind}")),
+            _ => invalid("unknown note kind"),
         }
     }
 
-    /// Records that a table entry of this weight was copied into the result.
-    fn spend(&mut self, weight: u64) -> Result<(), PackError> {
-        self.budget = self.budget.checked_sub(weight).ok_or(PackError::Invalid("pack expands too far".to_owned()))?;
-        Ok(())
+    /// Tracks nesting while reading an expression.
+    fn nested<T>(&mut self, read: impl FnOnce(&mut Self) -> Result<T, PackError>) -> Result<T, PackError> {
+        if self.depth >= DEPTH_LIMIT {
+            return invalid("expressions nest too deeply");
+        }
+        self.depth += 1;
+        let result = read(self);
+        self.depth -= 1;
+        result
     }
 }
 
@@ -266,7 +242,7 @@ trait Codec: Sized {
     fn read(r: &mut Reader<'_>) -> Result<Self, PackError>;
 }
 
-/// The encoding of a value that is stored in a shared table.
+/// The encoding of an expression, which can contain itself.
 trait Body: Sized {
     fn write_body(&self, w: &mut Writer);
     fn read_body(r: &mut Reader<'_>) -> Result<Self, PackError>;
@@ -280,7 +256,7 @@ impl Codec for bool {
         match r.varint()? {
             0 => Ok(false),
             1 => Ok(true),
-            other => invalid(format!("bad boolean {other}")),
+            _ => invalid("bad boolean"),
         }
     }
 }
@@ -354,15 +330,12 @@ impl Codec for f64 {
 
 impl Codec for String {
     fn write(&self, w: &mut Writer) {
-        let id = w.strings.intern(self.clone());
-        w.varint(u64::from(id));
+        w.varint(self.len() as u64);
+        w.logic.extend_from_slice(self.as_bytes());
     }
     fn read(r: &mut Reader<'_>) -> Result<Self, PackError> {
-        let id = r.varint()? as usize;
-        match r.tables.strings.get(id) {
-            Some(text) => Ok(text.clone()),
-            None => invalid("string index out of range"),
-        }
+        let length = r.varint()? as usize;
+        take_text(&mut r.logic, length)
     }
 }
 
@@ -452,7 +425,7 @@ macro_rules! tags {
             fn read(r: &mut Reader<'_>) -> Result<Self, PackError> {
                 match r.varint()? {
                     $($tag => Ok($ty::$variant),)+
-                    other => invalid(format!(concat!("unknown ", stringify!($ty), " tag {}"), other)),
+                    _ => invalid(concat!("unknown ", stringify!($ty), " tag")),
                 }
             }
         }
@@ -570,19 +543,34 @@ macro_rules! tagged {
             fn $read(r: &mut Reader<'_>) -> Result<Self, PackError> {
                 Ok(match r.varint()? {
                     $($tag => $ty::$variant $(($(tagged!(@read r $item)),+))? $({$($field: Codec::read(r)?),*})?,)+
-                    other => return invalid(format!(concat!("unknown ", stringify!($ty), " tag {}"), other)),
+                    _ => return invalid(concat!("unknown ", stringify!($ty), " tag")),
                 })
             }
         }
     };
 }
 
-tagged!(Codec write read: Quantity {
+tagged!(Body write_body read_body: Quantity {
     0 => Const(value),
     1 => Param(id),
     2 => Sum(terms),
     3 => Product(terms),
 });
+
+macro_rules! recursive {
+    ($($ty:ty),+) => {$(
+        impl Codec for $ty {
+            fn write(&self, w: &mut Writer) {
+                self.write_body(w);
+            }
+            fn read(r: &mut Reader<'_>) -> Result<Self, PackError> {
+                r.nested(Self::read_body)
+            }
+        }
+    )+};
+}
+
+recursive!(Quantity, Requirement);
 
 tagged!(Codec write read: WeaponFilter { 0 => Default, 1 => Only(list), 2 => Except(list) });
 tagged!(Codec write read: WeaponSelector { 0 => Weapon(id), 1 => Category(category) });
@@ -608,7 +596,7 @@ impl Codec for EnemyPlacement {
         match r.varint()? {
             0 => Ok(EnemyPlacement::Home(Codec::read(r)?)),
             1 => Ok(EnemyPlacement::Between(Codec::read(r)?, Codec::read(r)?)),
-            other => invalid(format!("unknown EnemyPlacement tag {other}")),
+            _ => invalid("unknown EnemyPlacement tag"),
         }
     }
 }
@@ -655,7 +643,7 @@ tagged!(Body write_body read_body: Requirement {
     38 => EnteredFrom(nodes),
 });
 
-tagged!(Body write_body read_body: DoorExit {
+tagged!(Codec write read: DoorExit {
     0 => Normal,
     1 => Runway { runway, min_extra_speed, heated },
     2 => Shinecharged,
@@ -722,13 +710,13 @@ tagged!(Codec write read: EntryKind {
     36 => SuperSink,
 });
 
-impl Body for DoorEntry {
-    fn write_body(&self, w: &mut Writer) {
+impl Codec for DoorEntry {
+    fn write(&self, w: &mut Writer) {
         self.kind.write(w);
         w.logic.push(tri_pair(self.through_toilet, self.heated));
         w.doc_note(&self.dev_note);
     }
-    fn read_body(r: &mut Reader<'_>) -> Result<Self, PackError> {
+    fn read(r: &mut Reader<'_>) -> Result<Self, PackError> {
         let kind = EntryKind::read(r)?;
         let (through_toilet, heated) = read_tri_pair(r)?;
         Ok(DoorEntry { kind, through_toilet, heated, dev_note: r.doc_note()? })
@@ -754,50 +742,6 @@ fn read_tri_pair(r: &mut Reader<'_>) -> Result<(TriState, TriState), PackError> 
         return invalid("bad door entry modifiers");
     }
     Ok((VALUES[packed / 3], VALUES[packed % 3]))
-}
-
-macro_rules! interned {
-    ($($ty:ty, $pool:ident, $table:ident;)+) => {$(
-        impl Codec for $ty {
-            fn write(&self, w: &mut Writer) {
-                let encoded = w.capture(|w| self.write_body(w));
-                let id = w.$pool.intern(encoded);
-                w.varint(u64::from(id));
-            }
-            fn read(r: &mut Reader<'_>) -> Result<Self, PackError> {
-                let id = r.varint()? as usize;
-                let (value, weight) = match r.tables.$table.get(id) {
-                    Some((value, weight)) => (value.clone(), *weight),
-                    None => return invalid(concat!(stringify!($table), " index out of range")),
-                };
-                r.spend(weight)?;
-                Ok(value)
-            }
-        }
-    )+};
-}
-
-interned! {
-    Requirement, requirements, requirements;
-    DoorEntry, entries, entries;
-    DoorExit, exits, exits;
-}
-
-/// Writes a requirement list through the list table.
-fn write_list(list: &Vec<Requirement>, w: &mut Writer) {
-    let encoded = w.capture(|w| list.write(w));
-    let id = w.lists.intern(encoded);
-    w.varint(u64::from(id));
-}
-
-fn read_list(r: &mut Reader<'_>) -> Result<Vec<Requirement>, PackError> {
-    let id = r.varint()? as usize;
-    let (list, weight) = match r.tables.lists.get(id) {
-        Some((list, weight)) => (list.clone(), *weight),
-        None => return invalid("list index out of range"),
-    };
-    r.spend(weight)?;
-    Ok(list)
 }
 
 impl Codec for Runway {
@@ -917,7 +861,7 @@ impl Codec for DoorUnlock {
     fn write(&self, w: &mut Writer) {
         self.node.write(w);
         self.types.write(w);
-        write_list(&self.requires, w);
+        self.requires.write(w);
         self.use_implicit_requires.write(w);
         self.doc.write(w);
     }
@@ -925,7 +869,7 @@ impl Codec for DoorUnlock {
         Ok(DoorUnlock {
             node: Codec::read(r)?,
             types: Codec::read(r)?,
-            requires: read_list(r)?,
+            requires: Codec::read(r)?,
             use_implicit_requires: Codec::read(r)?,
             doc: Codec::read(r)?,
         })
@@ -994,7 +938,7 @@ impl Codec for Strat {
             | flag(!self.review.blue_suit, BLUE_UNREVIEWED);
         w.varint(mask);
         w.doc_text(&self.name);
-        write_list(&self.requires, w);
+        self.requires.write(w);
         if let Some(entry) = &self.entry {
             entry.write(w);
         }
@@ -1023,7 +967,7 @@ impl Codec for Strat {
             _ => return invalid("bad door shell value"),
         };
         let name = r.doc_text()?;
-        let requires = read_list(r)?;
+        let requires = Vec::read(r)?;
         let entry = if mask & HAS_ENTRY != 0 { Some(DoorEntry::read(r)?) } else { None };
         let exit = if mask & HAS_EXIT != 0 { Some(DoorExit::read(r)?) } else { None };
         fn list<T: Codec>(r: &mut Reader<'_>, present: bool) -> Result<Vec<T>, PackError> {
@@ -1082,7 +1026,7 @@ impl Codec for RoomStrat {
                 let id = unzigzag(delta - 1)
                     .checked_add(r.previous_strat)
                     .and_then(|id| id.checked_add(1))
-                    .ok_or(PackError::Invalid("bad strat id".to_owned()))?;
+                    .ok_or(PackError::Invalid("bad strat id"))?;
                 r.previous_strat = id;
                 Some(source::StratId(u32::try_from(id).or_else(|_| invalid("bad strat id"))?))
             }
@@ -1138,13 +1082,13 @@ impl TileGrid {
     }
 }
 
-fn check_grid(rows: &[Vec<u8>], what: &str) -> Result<(), PackError> {
+fn check_grid(rows: &[Vec<u8>]) -> Result<(), PackError> {
     let width = rows.first().map_or(0, Vec::len);
     if rows.iter().any(|row| row.len() != width) {
-        return invalid(format!("{what} has rows of different lengths"));
+        return invalid("a map tile grid has rows of different lengths");
     }
     if rows.iter().flatten().any(|tile| *tile > 3) {
-        return invalid(format!("{what} has a tile value above 3"));
+        return invalid("a map tile grid has a value above 3");
     }
     Ok(())
 }
@@ -1644,76 +1588,26 @@ fn read_records(r: &mut Reader<'_>) -> Result<World, PackError> {
     })
 }
 
-fn put_strings(out: &mut Vec<u8>, strings: &[String]) {
-    put_varint(out, strings.len() as u64);
-    for text in strings {
-        put_varint(out, text.len() as u64);
-        out.extend_from_slice(text.as_bytes());
-    }
-}
-
-fn take_strings(bytes: &mut &[u8]) -> Result<Vec<String>, PackError> {
-    let count = take_varint(bytes)? as usize;
-    if count > bytes.len() {
-        return Err(PackError::Truncated);
-    }
-    let mut strings = Vec::with_capacity(count);
-    for _ in 0..count {
-        let length = take_varint(bytes)? as usize;
-        if length > bytes.len() {
-            return Err(PackError::Truncated);
-        }
-        let (text, rest) = bytes.split_at(length);
-        *bytes = rest;
-        strings.push(String::from_utf8(text.to_vec()).or_else(|_| invalid("string is not UTF-8"))?);
-    }
-    Ok(strings)
-}
-
 fn check_world_for_encoding(world: &World) -> Result<(), PackError> {
     for room in &world.rooms {
-        check_grid(&room.map_tiles, &room.name)?;
+        check_grid(&room.map_tiles)?;
         for node in &room.nodes {
-            check_grid(&node.map_tiles, &node.name)?;
+            check_grid(&node.map_tiles)?;
         }
     }
     Ok(())
 }
 
 /// Writes a world as a pack.
-pub fn encode(world: &World, options: &EncodeOptions) -> Result<Vec<u8>, PackError> {
+///
+/// `compress` must produce a `.lzma` stream, and only build tools need it, which is
+/// why this crate doesn't provide one. `sm_json_data::encode_pack` supplies it.
+pub fn encode(world: &World, options: &EncodeOptions, mut compress: impl FnMut(&[u8]) -> Vec<u8>) -> Result<Vec<u8>, PackError> {
     check_world_for_encoding(world)?;
-    let mut w = Writer {
-        logic: Vec::new(),
-        docs: Vec::new(),
-        docs_enabled: options.docs,
-        strings: Pool::default(),
-        doc_strings: Pool::default(),
-        requirements: Pool::default(),
-        lists: Pool::default(),
-        entries: Pool::default(),
-        exits: Pool::default(),
-        previous_strat: 0,
-    };
+    let mut w = Writer { logic: Vec::new(), docs: Vec::new(), docs_enabled: options.docs, previous_strat: 0 };
     write_records(world, &mut w);
-    let records = std::mem::take(&mut w.logic);
-    let record_docs = std::mem::take(&mut w.docs);
-
-    let mut logic = Vec::with_capacity(records.len() * 2);
-    put_strings(&mut logic, &w.strings.items);
-    let mut docs = Vec::new();
-    if options.docs {
-        put_strings(&mut docs, &w.doc_strings.items);
-    }
-    for pool in [&w.requirements, &w.lists, &w.entries, &w.exits] {
-        put_varint(&mut logic, pool.items.len() as u64);
-        for (item_logic, item_docs) in &pool.items {
-            logic.extend_from_slice(item_logic);
-            docs.extend_from_slice(item_docs);
-        }
-    }
-    logic.extend_from_slice(&records);
-    docs.extend_from_slice(&record_docs);
+    let logic = compress(&w.logic);
+    let docs = if options.docs { compress(&w.docs) } else { Vec::new() };
 
     let mut out = Vec::with_capacity(logic.len() + docs.len() + 32);
     out.extend_from_slice(MAGIC);
@@ -1758,9 +1652,7 @@ fn split_sections(mut bytes: &[u8]) -> Result<Sections<'_>, PackError> {
     if source_length > bytes.len() {
         return Err(PackError::Truncated);
     }
-    let (source, rest) = bytes.split_at(source_length);
-    let source = String::from_utf8(source.to_vec()).or_else(|_| invalid("source is not UTF-8"))?;
-    bytes = rest;
+    let source = take_text(&mut bytes, source_length)?;
     let logic_bytes = take_varint(&mut bytes)? as usize;
     let docs_bytes = take_varint(&mut bytes)? as usize;
     if logic_bytes.checked_add(docs_bytes) != Some(bytes.len()) {
@@ -1779,25 +1671,6 @@ pub fn inspect(bytes: &[u8]) -> Result<PackInfo, PackError> {
     Ok(split_sections(bytes)?.info)
 }
 
-fn read_table<T>(
-    r: &mut Reader<'_>,
-    read: impl Fn(&mut Reader<'_>) -> Result<T, PackError>,
-    push: impl Fn(&mut Tables, (T, u64)),
-) -> Result<(), PackError> {
-    let count = take_varint(&mut r.logic)? as usize;
-    if count > r.logic.len() {
-        return Err(PackError::Truncated);
-    }
-    for _ in 0..count {
-        let before = r.budget;
-        let value = read(r)?;
-        // What this entry copied from earlier entries, plus the entry itself.
-        let weight = before - r.budget + 1;
-        push(&mut r.tables, (value, weight));
-    }
-    Ok(())
-}
-
 /// Reads and validates a pack.
 pub fn decode(bytes: &[u8], docs: Docs) -> Result<World, PackError> {
     split_sections(bytes)?;
@@ -1813,31 +1686,12 @@ pub fn decode(bytes: &[u8], docs: Docs) -> Result<World, PackError> {
 #[doc(hidden)]
 pub fn decode_unverified(bytes: &[u8], docs: Docs) -> Result<World, PackError> {
     let sections = split_sections(bytes)?;
-    let mut logic = sections.logic;
-    let strings = take_strings(&mut logic)?;
-    let mut doc_bytes = if docs == Docs::Load { sections.docs } else { None };
-    let doc_strings = match &mut doc_bytes {
-        Some(section) => take_strings(section)?,
-        None => Vec::new(),
+    let logic = lzma::decompress(sections.logic, SECTION_LIMIT).map_err(PackError::Invalid)?;
+    let docs_data = match (docs, sections.docs) {
+        (Docs::Load, Some(section)) => Some(lzma::decompress(section, SECTION_LIMIT).map_err(PackError::Invalid)?),
+        _ => None,
     };
-    let mut r = Reader {
-        logic,
-        docs: doc_bytes,
-        tables: Tables {
-            strings,
-            doc_strings,
-            requirements: Vec::new(),
-            lists: Vec::new(),
-            entries: Vec::new(),
-            exits: Vec::new(),
-        },
-        budget: EXPANSION_BUDGET,
-        previous_strat: 0,
-    };
-    read_table(&mut r, Requirement::read_body, |t, entry| t.requirements.push(entry))?;
-    read_table(&mut r, Vec::<Requirement>::read, |t, entry| t.lists.push(entry))?;
-    read_table(&mut r, DoorEntry::read_body, |t, entry| t.entries.push(entry))?;
-    read_table(&mut r, DoorExit::read_body, |t, entry| t.exits.push(entry))?;
+    let mut r = Reader { logic: &logic, docs: docs_data.as_deref(), depth: 0, previous_strat: 0 };
     let mut world = read_records(&mut r)?;
     if !r.logic.is_empty() {
         return invalid("trailing bytes in the logic section");
@@ -1855,35 +1709,11 @@ mod tests {
     use super::*;
 
     fn empty_writer() -> Writer {
-        Writer {
-            logic: Vec::new(),
-            docs: Vec::new(),
-            docs_enabled: true,
-            strings: Pool::default(),
-            doc_strings: Pool::default(),
-            requirements: Pool::default(),
-            lists: Pool::default(),
-            entries: Pool::default(),
-            exits: Pool::default(),
-            previous_strat: 0,
-        }
+        Writer { logic: Vec::new(), docs: Vec::new(), docs_enabled: true, previous_strat: 0 }
     }
 
     fn empty_reader(bytes: &[u8]) -> Reader<'_> {
-        Reader {
-            logic: bytes,
-            docs: None,
-            tables: Tables {
-                strings: Vec::new(),
-                doc_strings: Vec::new(),
-                requirements: Vec::new(),
-                lists: Vec::new(),
-                entries: Vec::new(),
-                exits: Vec::new(),
-            },
-            budget: EXPANSION_BUDGET,
-            previous_strat: 0,
-        }
+        Reader { logic: bytes, docs: None, depth: 0, previous_strat: 0 }
     }
 
     #[test]
@@ -1922,6 +1752,16 @@ mod tests {
         TileGrid::write_rows(&rows, &mut w);
         assert_eq!(w.logic.len(), 2 + 2);
         assert_eq!(TileGrid::read_rows(&mut empty_reader(&w.logic)).unwrap(), rows);
+    }
+
+    #[test]
+    fn deep_nesting_is_rejected() {
+        // A long run of "all of one" requirements.
+        let mut bytes = Vec::new();
+        for _ in 0..10_000 {
+            bytes.extend_from_slice(&[2, 1]);
+        }
+        assert!(matches!(Requirement::read(&mut empty_reader(&bytes)), Err(PackError::Invalid(_))));
     }
 
     #[test]

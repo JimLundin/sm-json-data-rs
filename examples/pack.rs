@@ -2,8 +2,8 @@
 //!
 //! Run with: `cargo run --release --example pack -- <sm-json-data path> <output> [--docs]`
 
-use sm_json_data::load_world;
-use sm_logic::pack::{decode, encode, inspect, Docs, EncodeOptions};
+use sm_json_data::{encode_pack, load_world};
+use sm_logic::pack::{decode, inspect, Docs, EncodeOptions};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,11 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let docs = args.next().as_deref() == Some("--docs");
 
     let world = load_world(&root)?;
-    let bytes = encode(&world, &EncodeOptions { docs, source: root })?;
+    let bytes = encode_pack(&world, &EncodeOptions { docs, source: root })?;
     std::fs::write(&output, &bytes)?;
 
     let info = inspect(&bytes)?;
-    println!("{output}: {} bytes ({} logic, {} docs)", bytes.len(), info.logic_bytes, info.docs_bytes);
+    println!("{output}: {} bytes ({} logic, {} docs, compressed)", bytes.len(), info.logic_bytes, info.docs_bytes);
     let started = Instant::now();
     decode(&bytes, Docs::Load)?;
     println!("decoded and validated in {:.1} ms", started.elapsed().as_secs_f64() * 1e3);

@@ -1410,7 +1410,7 @@ impl<'a> Importer<'a> {
         };
         world
             .validate()
-            .map_err(|problem| ImportErrors(vec![ModelError { location: "validation".to_owned(), problem }]))?;
+            .map_err(|problem| ImportErrors(vec![ModelError { location: "validation".to_owned(), problem: problem.to_owned() }]))?;
         Ok(world)
     }
 }

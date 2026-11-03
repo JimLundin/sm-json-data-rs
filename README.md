@@ -5,7 +5,7 @@ Rust tools for [sm-json-data](https://github.com/vg-json-data/sm-json-data), the
 | Crate | Purpose | Dependencies |
 |---|---|---|
 | `sm-logic` | The domain model, and the pack file format | None (Serde is optional, for `sm-json-data`) |
-| `sm-json-data` | Parses the JSON and imports it into `sm-logic` | Serde |
+| `sm-json-data` | Parses the JSON, imports it into `sm-logic`, and writes packs | Serde, liblzma |
 
 A game only needs `sm-logic`. It loads a pack produced ahead of time:
 
@@ -54,15 +54,16 @@ Dense IDs such as `TechId` are assigned at import and aren't stable between data
 
 ## The pack format
 
-A pack has a logic section and an optional docs section. The layout is described at the top of `sm-logic/src/pack.rs`.
+A pack is built for the smallest total binary, counting both the data and the code to read it. It has a logic section and an optional docs section, each compressed separately. The layout is described at the top of `sm-logic/src/pack.rs`.
 
-- **Shared tables:** strings, requirements, requirement lists and door conditions are stored once and referenced by index.
+- **Compression:** sections are `.lzma` streams, read by a small decoder inside `sm-logic`. Build tools do the compressing, so the game never carries a compressor.
+- **No hand-made tables:** values are written inline, in the order of the model's fields. LZMA shares repeated data better than shared tables did, and leaving them out also shrinks the decoder.
 - **Compact values:** integers are varints, numbers use the shortest exact form, map tiles take two bits each, and strats start with a bitmask of which fields they have.
 - **Optional docs:** notes, strat and failure names, notable names and descriptions, enemy group names, obstacle names and connection labels all go in the docs section. Load it with `Docs::Load`, skip it with `Docs::Skip`, or leave it out with `EncodeOptions { docs: false, .. }`.
 - **Safe to load:** a checksum catches damage, and every index is checked, so a bad file gives a `PackError` rather than a panic. The checksum isn't tamper-proof.
 - **Versioned:** the format version is checked on load, and there is no compatibility between versions yet. The header also records which source data the pack came from.
 
-Decoding currently expands everything into a `World` of owned trees, which takes far more memory than the pack itself.
+Decoding builds a `World` of owned trees, which takes far more memory than the pack. That suits short-lived work such as generating a seed.
 
 ## The JSON layer
 

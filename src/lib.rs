@@ -3,6 +3,7 @@
 //! Rando's fork of the data.
 //!
 //! - [`load_world`] loads a checkout into a [`sm_logic::World`].
+//! - [`encode_pack`] writes a world as a compact pack for [`sm_logic::pack::decode`].
 //! - [`raw`] mirrors the JSON files, for parsing and writing them.
 //!
 //! ```no_run
@@ -25,9 +26,11 @@
 //!
 //! [sm-json-data]: https://github.com/vg-json-data/sm-json-data
 
+mod compress;
 mod export;
 mod import;
 pub mod raw;
 
+pub use compress::{compress_lzma, encode_pack};
 pub use export::export_world;
 pub use import::{import_world, load_world, ImportErrors, ModelError, WorldError};

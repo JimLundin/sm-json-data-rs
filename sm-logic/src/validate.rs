@@ -2,35 +2,34 @@
 
 use crate::*;
 
-fn check(valid: bool, what: impl FnOnce() -> String) -> Result<(), String> {
-    if valid { Ok(()) } else { Err(what()) }
+fn check(valid: bool, problem: &'static str) -> Result<(), &'static str> {
+    if valid { Ok(()) } else { Err(problem) }
 }
 
 impl World {
     /// Checks every reference, so that indexing with this world's IDs can't panic.
-    pub fn validate(&self) -> Result<(), String> {
-        for (index, tech) in self.techs.iter().enumerate() {
-            let at = || format!("tech {index}");
-            self.requirements(&tech.tech_requires, None).map_err(|e| format!("{}: {e}", at()))?;
-            self.requirements(&tech.other_requires, None).map_err(|e| format!("{}: {e}", at()))?;
+    pub fn validate(&self) -> Result<(), &'static str> {
+        for tech in &self.techs {
+            self.requirements(&tech.tech_requires, None)?;
+            self.requirements(&tech.other_requires, None)?;
             for extension in &tech.extensions {
-                check(extension.index() < self.techs.len(), || format!("{}: bad extension", at()))?;
+                check(extension.index() < self.techs.len(), "bad tech extension")?;
             }
         }
         for category in &self.tech_categories {
-            check(category.members.iter().all(|id| id.index() < self.techs.len()), || "bad tech category".to_owned())?;
+            check(category.members.iter().all(|id| id.index() < self.techs.len()), "bad tech category")?;
         }
         for helper in &self.helpers {
             self.requirements(&helper.requires, None)?;
         }
         for category in &self.helper_categories {
-            check(category.members.iter().all(|id| id.index() < self.helpers.len()), || "bad helper category".to_owned())?;
+            check(category.members.iter().all(|id| id.index() < self.helpers.len()), "bad helper category")?;
         }
         for numeric in &self.numerics {
             self.quantity(&numeric.default)?;
         }
         for category in &self.numeric_categories {
-            check(category.members.iter().all(|id| id.index() < self.numerics.len()), || "bad numeric category".to_owned())?;
+            check(category.members.iter().all(|id| id.index() < self.numerics.len()), "bad numeric category")?;
         }
         self.check_numeric_cycles()?;
         for weapon in &self.weapons {
@@ -38,7 +37,7 @@ impl World {
             self.requirements(&weapon.shot_requires, None)?;
         }
         for enemy in &self.enemies {
-            check(enemy.attacks.len() <= usize::from(u8::MAX) + 1, || "enemy has too many attacks".to_owned())?;
+            check(enemy.attacks.len() <= usize::from(u8::MAX) + 1, "enemy has too many attacks")?;
             for selector in enemy.invulnerable_to.iter().chain(enemy.damage_multipliers.iter().map(|(s, _)| s)) {
                 self.selector(selector)?;
             }
@@ -58,22 +57,22 @@ impl World {
         for flag in &self.start.flags {
             self.flag(*flag)?;
         }
-        check(self.start.room.index() < self.rooms.len(), || "bad starting room".to_owned())?;
+        check(self.start.room.index() < self.rooms.len(), "bad starting room")?;
         let start = &self[self.start.room];
         self.node(Some(start), self.start.node)?;
         for room in &self.rooms {
-            self.room(room).map_err(|e| format!("room {}: {e}", room.name))?;
+            self.room(room)?;
         }
         for connection in &self.connections {
             for end in &connection.ends {
-                check(end.room.index() < self.rooms.len(), || "connection has a bad room".to_owned())?;
+                check(end.room.index() < self.rooms.len(), "connection has a bad room")?;
                 self.node(Some(&self[end.room]), end.node)?;
             }
         }
         Ok(())
     }
 
-    fn check_numeric_cycles(&self) -> Result<(), String> {
+    fn check_numeric_cycles(&self) -> Result<(), &'static str> {
         fn params(quantity: &Quantity, out: &mut Vec<NumericId>) {
             match quantity {
                 Quantity::Const(_) => {}
@@ -102,77 +101,77 @@ impl World {
         }
         let mut marks = vec![Mark::New; self.numerics.len()];
         for id in 0..self.numerics.len() {
-            check(visit(id, &self.numerics, &mut marks), || format!("numeric {} depends on itself", self.numerics[id].name))?;
+            check(visit(id, &self.numerics, &mut marks), "a numeric parameter depends on itself")?;
         }
         Ok(())
     }
 
-    fn enemy(&self, id: EnemyId) -> Result<(), String> {
-        check(id.index() < self.enemies.len(), || format!("bad enemy {}", id.index()))
+    fn enemy(&self, id: EnemyId) -> Result<(), &'static str> {
+        check(id.index() < self.enemies.len(), "bad enemy")
     }
 
-    fn flag(&self, id: FlagId) -> Result<(), String> {
-        check(id.index() < self.flags.len(), || format!("bad flag {}", id.index()))
+    fn flag(&self, id: FlagId) -> Result<(), &'static str> {
+        check(id.index() < self.flags.len(), "bad flag")
     }
 
-    fn attack(&self, attack: &AttackRef) -> Result<(), String> {
+    fn attack(&self, attack: &AttackRef) -> Result<(), &'static str> {
         self.enemy(attack.enemy)?;
-        check(usize::from(attack.attack) < self[attack.enemy].attacks.len(), || "bad enemy attack".to_owned())
+        check(usize::from(attack.attack) < self[attack.enemy].attacks.len(), "bad enemy attack")
     }
 
-    fn selector(&self, selector: &WeaponSelector) -> Result<(), String> {
+    fn selector(&self, selector: &WeaponSelector) -> Result<(), &'static str> {
         match selector {
-            WeaponSelector::Weapon(id) => check(id.index() < self.weapons.len(), || "bad weapon".to_owned()),
+            WeaponSelector::Weapon(id) => check(id.index() < self.weapons.len(), "bad weapon"),
             WeaponSelector::Category(_) => Ok(()),
         }
     }
 
-    fn weapon_filter(&self, filter: &WeaponFilter) -> Result<(), String> {
+    fn weapon_filter(&self, filter: &WeaponFilter) -> Result<(), &'static str> {
         match filter {
             WeaponFilter::Default => Ok(()),
             WeaponFilter::Only(list) | WeaponFilter::Except(list) => list.iter().try_for_each(|s| self.selector(s)),
         }
     }
 
-    fn quantity(&self, quantity: &Quantity) -> Result<(), String> {
+    fn quantity(&self, quantity: &Quantity) -> Result<(), &'static str> {
         match quantity {
             Quantity::Const(_) => Ok(()),
-            Quantity::Param(id) => check(id.index() < self.numerics.len(), || "bad numeric".to_owned()),
+            Quantity::Param(id) => check(id.index() < self.numerics.len(), "bad numeric"),
             Quantity::Sum(terms) | Quantity::Product(terms) => terms.iter().try_for_each(|t| self.quantity(t)),
         }
     }
 
-    fn node(&self, room: Option<&Room>, id: NodeId) -> Result<(), String> {
-        let room = room.ok_or_else(|| format!("node {id} referenced outside a room"))?;
-        check(room.node(id).is_some(), || format!("no node {id}"))
+    fn node(&self, room: Option<&Room>, id: NodeId) -> Result<(), &'static str> {
+        let room = room.ok_or("node referenced outside a room")?;
+        check(room.node(id).is_some(), "no such node")
     }
 
-    fn obstacles(&self, room: Option<&Room>, ids: &[ObstacleId]) -> Result<(), String> {
+    fn obstacles(&self, room: Option<&Room>, ids: &[ObstacleId]) -> Result<(), &'static str> {
         let room = room.ok_or("obstacle referenced outside a room")?;
-        check(ids.iter().all(|id| id.index() < room.obstacles.len()), || "bad obstacle".to_owned())
+        check(ids.iter().all(|id| id.index() < room.obstacles.len()), "bad obstacle")
     }
 
-    fn requirements(&self, list: &[Requirement], room: Option<&Room>) -> Result<(), String> {
+    fn requirements(&self, list: &[Requirement], room: Option<&Room>) -> Result<(), &'static str> {
         list.iter().try_for_each(|r| self.requirement(r, room))
     }
 
-    fn drops(&self, drops: &[EnemyDrop]) -> Result<(), String> {
+    fn drops(&self, drops: &[EnemyDrop]) -> Result<(), &'static str> {
         drops.iter().try_for_each(|drop| self.enemy(drop.enemy))
     }
 
-    fn requirement(&self, r: &Requirement, room: Option<&Room>) -> Result<(), String> {
+    fn requirement(&self, r: &Requirement, room: Option<&Room>) -> Result<(), &'static str> {
         use Requirement as R;
         match r {
             R::Free | R::Never | R::Item(_) | R::DisableEquipment(_) | R::Refill(_) | R::RidleyKill { .. } => Ok(()),
             R::ShineCharge(_) | R::BlueSpeed(_) | R::SpeedBall(_) | R::Shinespark { .. } | R::FlashSuit(_) | R::BlueSuit(_) => Ok(()),
             R::All(list) | R::Any(list) => self.requirements(list, room),
             R::Flag(id) | R::NotFlag(id) => self.flag(*id),
-            R::Tech(id) | R::TechOnly(id) => check(id.index() < self.techs.len(), || "bad tech".to_owned()),
-            R::Helper(id) => check(id.index() < self.helpers.len(), || "bad helper".to_owned()),
-            R::Internal(id) => check(id.index() < self.internals.len(), || "bad internal requirement".to_owned()),
+            R::Tech(id) | R::TechOnly(id) => check(id.index() < self.techs.len(), "bad tech"),
+            R::Helper(id) => check(id.index() < self.helpers.len(), "bad helper"),
+            R::Internal(id) => check(id.index() < self.internals.len(), "bad internal requirement"),
             R::Notable(id) => {
                 let room = room.ok_or("notable referenced outside a room")?;
-                check(room.notable(*id).is_some(), || format!("no notable {id}"))
+                check(room.notable(*id).is_some(), "no such notable")
             }
             R::Ammo { count, .. } => self.quantity(count),
             R::PartialRefill { limit, .. } => self.quantity(limit),
@@ -211,7 +210,7 @@ impl World {
         }
     }
 
-    fn strat(&self, strat: &Strat, room: &Room) -> Result<(), String> {
+    fn strat(&self, strat: &Strat, room: &Room) -> Result<(), &'static str> {
         let scope = Some(room);
         self.requirements(&strat.requires, scope)?;
         if let Some(DoorEntry { kind: EntryKind::SidePlatform { platforms }, .. }) = &strat.entry {
@@ -242,7 +241,7 @@ impl World {
         Ok(())
     }
 
-    fn room(&self, room: &Room) -> Result<(), String> {
+    fn room(&self, room: &Room) -> Result<(), &'static str> {
         let scope = Some(room);
         for environment in &room.environments {
             environment.entrances.iter().flatten().try_for_each(|id| self.node(scope, *id))?;
